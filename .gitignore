@@ -19,6 +19,9 @@ skills-lock.json
 # Test coverage
 coverage/
 
+# Teaching materials
+teaching/
+
 # IDE
 .idea/
 .vscode/
