@@ -10,6 +10,8 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   COOKIE_ENCRYPTION_KEY: string;
+  WEBHOOK_SECRET: string;
+  GITHUB_TOKEN: string;
   SECOND_BRAIN_MCP: DurableObjectNamespace;
 }
 
@@ -76,6 +78,12 @@ export interface ReindexRequest {
 export interface ReindexResult {
   file_key: string | null;
   reindexed: number;
+  status: string;
+}
+
+export interface DeleteFileResult {
+  file_key: string;
+  deleted: boolean;
   status: string;
 }
 
@@ -233,6 +241,17 @@ export async function ingestCore(
     }
 
     // 3. Re-ingestion: delete old chunks for this file_key
+    const existingChunks = await env.DB.prepare(
+      "SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL",
+    )
+      .bind(file_key)
+      .all<{ vector_id: string }>();
+    const existingVectorIds = existingChunks.results.map(
+      (chunk) => chunk.vector_id,
+    );
+    if (env.VECTORIZE && existingVectorIds.length > 0) {
+      await env.VECTORIZE.deleteByIds(existingVectorIds);
+    }
     await env.DB.prepare("DELETE FROM chunks WHERE file_key = ?")
       .bind(file_key)
       .run();
@@ -332,6 +351,54 @@ async function generateEmbeddings(
     return data.data ?? null;
   } catch {
     return null;
+  }
+}
+
+export async function deleteFileCore(
+  env: Env,
+  fileKey: string,
+): Promise<DeleteFileResult | Response> {
+  try {
+    const file = await env.DB.prepare(
+      "SELECT file_key, r2_key FROM files WHERE file_key = ?",
+    )
+      .bind(fileKey)
+      .first<{ file_key: string; r2_key: string }>();
+
+    if (!file)
+      return { file_key: fileKey, deleted: false, status: "not_found" };
+
+    const chunks = await env.DB.prepare(
+      "SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL",
+    )
+      .bind(fileKey)
+      .all<{ vector_id: string }>();
+
+    const vectorIds = chunks.results.map((chunk) => chunk.vector_id);
+    if (env.VECTORIZE && vectorIds.length > 0) {
+      await env.VECTORIZE.deleteByIds(vectorIds);
+    }
+
+    await env.RAW_BUCKET.delete(file.r2_key);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM chunks WHERE file_key = ?").bind(fileKey),
+      env.DB.prepare("DELETE FROM files WHERE file_key = ?").bind(fileKey),
+    ]);
+
+    return { file_key: fileKey, deleted: true, status: "ok" };
+  } catch (err) {
+    return jsonResponse(
+      {
+        error: {
+          code: "DELETE_FAILED",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unknown error during deletion",
+        },
+      },
+      500,
+    );
   }
 }
 

@@ -3,6 +3,13 @@ main = "src/worker.ts"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
+[vars]
+WEBHOOK_SECRET = "test-webhook-secret"
+GITHUB_TOKEN = "test-github-token"
+GITHUB_CLIENT_ID = "test-github-client-id"
+GITHUB_CLIENT_SECRET = "test-github-client-secret"
+COOKIE_ENCRYPTION_KEY = "test-cookie-encryption-key-32-bytes"
+
 [[r2_buckets]]
 binding = "RAW_BUCKET"
 bucket_name = "second-brain-raw"

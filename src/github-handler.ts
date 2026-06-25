@@ -25,6 +25,7 @@ import {
   handleCORS,
   type Env,
 } from "./handlers";
+import { handleGitHubWebhook } from "./webhook";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
@@ -43,6 +44,8 @@ app.post("/api/reindex", (c) => doReindex(c.req.raw, c.env));
 app.all("/api/*", (c) =>
   c.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404),
 );
+
+app.post("/webhook/github", (c) => handleGitHubWebhook(c.req.raw, c.env));
 
 // --- OAuth flow ---
 

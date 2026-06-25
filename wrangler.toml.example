@@ -39,3 +39,7 @@ new_sqlite_classes = ["SecondBrainMCP"]
 # GITHUB_CLIENT_ID
 # GITHUB_CLIENT_SECRET
 # COOKIE_ENCRYPTION_KEY
+
+# GitHub webhook sync secrets (set via `wrangler secret put`):
+# WEBHOOK_SECRET
+# GITHUB_TOKEN
