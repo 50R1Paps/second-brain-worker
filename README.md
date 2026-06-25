@@ -236,6 +236,35 @@ Da ora, ogni push su `main` che modifica file `.md` in `wiki/` triggera la re-in
 
 ---
 
+## Gestione dei secret
+
+I secret sono gestiti via `wrangler secret put` e stored nella dashboard Cloudflare (mai nel codice). Ecco quando aggiornarli:
+
+| Secret                  | Scade?                                             | Quando aggiornare                                                                                      |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `GITHUB_TOKEN`          | **Sì** — scade in base alla configurazione del PAT | Quando il Personal Access Token scade: `npx wrangler secret put GITHUB_TOKEN` e incolla il nuovo token |
+| `GITHUB_CLIENT_ID`      | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                           |
+| `GITHUB_CLIENT_SECRET`  | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                           |
+| `COOKIE_ENCRYPTION_KEY` | No                                                 | Mai (a meno che tu non voglia invalidare tutte le sessioni attive)                                     |
+| `WEBHOOK_SECRET`        | No                                                 | Mai (deve coincidere con il secret configurato nelle impostazioni webhook su GitHub)                   |
+
+### Rotazione del `GITHUB_TOKEN`
+
+Il `GITHUB_TOKEN` (Personal Access Token con scope `repo`) è l'unico secret con scadenza. Quando scade:
+
+1. Crea un nuovo token su [GitHub Settings > Tokens](https://github.com/settings/tokens) con scope `repo`
+2. Aggiorna il secret su Cloudflare:
+
+```bash
+npx wrangler secret put GITHUB_TOKEN
+```
+
+3. Incolla il nuovo token quando richiesto
+
+Nessun altro secret o configurazione su Cloudflare deve essere aggiornato.
+
+---
+
 ## Configurare il client MCP nel IDE
 
 ### Windsurf / Cursor
