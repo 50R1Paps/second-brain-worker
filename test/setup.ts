@@ -1,7 +1,5 @@
 import { env } from "cloudflare:test";
 
-let migrated = false;
-
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS files (
   file_key TEXT PRIMARY KEY,
@@ -42,8 +40,6 @@ END`,
 ];
 
 export async function ensureSchema() {
-  if (migrated) return;
   const db = (env as unknown as { DB: D1Database }).DB;
   await db.batch(STATEMENTS.map((stmt) => db.prepare(stmt)));
-  migrated = true;
 }

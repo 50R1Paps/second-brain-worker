@@ -4,3 +4,24 @@ dist/
 .dev.vars
 .agents/
 skills-lock.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Test coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+
+# Real wrangler config (use wrangler.toml.example as template)
+wrangler.toml
