@@ -1,0 +1,14 @@
+name = "second-brain-test"
+main = "src/worker.ts"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "RAW_BUCKET"
+bucket_name = "second-brain-raw"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "second-brain-test"
+database_id = "test"
+migrations_dir = "migrations"

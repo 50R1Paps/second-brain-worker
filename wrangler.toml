@@ -1,0 +1,21 @@
+name = "second-brain"
+main = "src/worker.ts"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "RAW_BUCKET"
+bucket_name = "second-brain-raw"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "second-brain"
+database_id = "<da-creare>"
+migrations_dir = "migrations"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "second-brain-embeddings"
+
+[ai]
+binding = "AI"
