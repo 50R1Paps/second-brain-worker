@@ -155,3 +155,181 @@ describe("MCP — /mcp endpoint exists", () => {
     expect(response.status).not.toBe(404);
   });
 });
+
+describe("MCP — read endpoint", () => {
+  it("POST /api/read returns raw text for an indexed file", async () => {
+    await ensureSchema();
+    const content =
+      "## Section A\nThis is the first section.\n\n## Section B\nThis is the second section with [[Wikilink]].";
+    await ingestFile("wiki/mcp-read-test.md", content);
+
+    const response = await SELF.fetch("http://localhost/api/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_key: "wiki/mcp-read-test.md" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string;
+      content: string;
+      offset: number;
+      total_length: number;
+      truncated: boolean;
+    }>();
+    expect(data.file_key).toBe("wiki/mcp-read-test.md");
+    expect(data.offset).toBe(0);
+    expect(data.content).toContain("Section A");
+    expect(data.content).toContain("Section B");
+    expect(data.truncated).toBe(false);
+  });
+
+  it("POST /api/read respects offset and max_chars", async () => {
+    await ensureSchema();
+    const content = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    await ingestFile("wiki/mcp-read-offset.md", content);
+
+    const response = await SELF.fetch("http://localhost/api/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-read-offset.md",
+        offset: 10,
+        max_chars: 5,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      content: string;
+      offset: number;
+      total_length: number;
+      truncated: boolean;
+    }>();
+    expect(data.offset).toBe(10);
+    expect(data.content).toBe("KLMNO");
+    expect(data.truncated).toBe(true);
+  });
+
+  it("POST /api/read returns 404 for unknown file", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_key: "wiki/nonexistent.md" }),
+    });
+
+    expect(response.status).toBe(404);
+    const data = await response.json<{ error: { code: string } }>();
+    expect(data.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("MCP — grep endpoint", () => {
+  it("POST /api/grep finds regex matches with context", async () => {
+    await ensureSchema();
+    const content =
+      "The total is $42.50 and the date is 2024-01-15. Another total is $100.00.";
+    await ingestFile("wiki/mcp-grep-test.md", content);
+
+    const response = await SELF.fetch("http://localhost/api/grep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-grep-test.md",
+        pattern: "\\$[0-9]+\\.[0-9]+",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string;
+      pattern: string;
+      matches: Array<{
+        match: string;
+        start: number;
+        end: number;
+        context: { text: string };
+      }>;
+      total: number;
+    }>();
+    expect(data.file_key).toBe("wiki/mcp-grep-test.md");
+    expect(data.total).toBe(2);
+    expect(data.matches[0].match).toBe("$42.50");
+    expect(data.matches[1].match).toBe("$100.00");
+    expect(data.matches[0].context.text).toContain("total is $42.50");
+  });
+
+  it("POST /api/grep respects max_matches limit", async () => {
+    await ensureSchema();
+    const content = "aaa bbb aaa bbb aaa bbb aaa bbb";
+    await ingestFile("wiki/mcp-grep-limit.md", content);
+
+    const response = await SELF.fetch("http://localhost/api/grep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-grep-limit.md",
+        pattern: "aaa",
+        max_matches: 2,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{ total: number }>();
+    expect(data.total).toBe(2);
+  });
+
+  it("POST /api/grep returns no matches for non-matching pattern", async () => {
+    await ensureSchema();
+    await ingestFile("wiki/mcp-grep-nomatch.md", "Hello world");
+
+    const response = await SELF.fetch("http://localhost/api/grep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-grep-nomatch.md",
+        pattern: "xyz123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{ total: number; matches: unknown[] }>();
+    expect(data.total).toBe(0);
+    expect(data.matches.length).toBe(0);
+  });
+
+  it("POST /api/grep returns 400 for invalid regex", async () => {
+    await ensureSchema();
+    await ingestFile("wiki/mcp-grep-invalid.md", "Hello world");
+
+    const response = await SELF.fetch("http://localhost/api/grep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-grep-invalid.md",
+        pattern: "[invalid",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const data = await response.json<{ error: { code: string } }>();
+    expect(data.error.code).toBe("INVALID_REGEX");
+  });
+
+  it("POST /api/grep returns 404 for unknown file", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/grep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/nonexistent.md",
+        pattern: "test",
+      }),
+    });
+
+    expect(response.status).toBe(404);
+    const data = await response.json<{ error: { code: string } }>();
+    expect(data.error.code).toBe("NOT_FOUND");
+  });
+});

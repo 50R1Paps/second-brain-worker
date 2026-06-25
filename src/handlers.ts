@@ -87,6 +87,41 @@ export interface DeleteFileResult {
   status: string;
 }
 
+export interface ReadRequest {
+  file_key: string;
+  offset?: number;
+  max_chars?: number;
+}
+
+export interface ReadResult {
+  file_key: string;
+  content: string;
+  offset: number;
+  total_length: number;
+  truncated: boolean;
+}
+
+export interface GrepRequest {
+  file_key: string;
+  pattern: string;
+  max_matches?: number;
+  context?: number;
+}
+
+export interface GrepMatch {
+  match: string;
+  start: number;
+  end: number;
+  context?: { text: string; start: number; end: number };
+}
+
+export interface GrepResult {
+  file_key: string;
+  pattern: string;
+  matches: GrepMatch[];
+  total: number;
+}
+
 interface SemanticHit {
   file_key: string;
   chunk_index: number;
@@ -862,4 +897,256 @@ async function reindexAll(env: Env): Promise<ReindexResult> {
     reindexed: count,
     status: "ok",
   };
+}
+
+// ---------------------------------------------------------------------------
+// Read — raw text from R2 with optional offset/limit
+// ---------------------------------------------------------------------------
+
+const DEFAULT_READ_MAX_CHARS = 2000;
+const MAX_READ_CHARS = 10000;
+
+export async function readCore(
+  env: Env,
+  file_key: string,
+  offset = 0,
+  max_chars = DEFAULT_READ_MAX_CHARS,
+): Promise<ReadResult | Response> {
+  const file = await env.DB.prepare(
+    "SELECT file_key, r2_key FROM files WHERE file_key = ?",
+  )
+    .bind(file_key)
+    .first<{ file_key: string; r2_key: string }>();
+
+  if (!file) {
+    return jsonResponse(
+      { error: { code: "NOT_FOUND", message: `File ${file_key} not found` } },
+      404,
+    );
+  }
+
+  const r2Obj = await env.RAW_BUCKET.get(file.r2_key);
+  if (!r2Obj) {
+    return jsonResponse(
+      {
+        error: {
+          code: "RAW_NOT_FOUND",
+          message: `Raw content for ${file_key} not found in R2`,
+        },
+      },
+      404,
+    );
+  }
+
+  const content = await r2Obj.text();
+  const clampedMax = Math.min(max_chars, MAX_READ_CHARS);
+  const safeOffset = Math.max(0, Math.min(offset, content.length));
+  const slice = content.slice(safeOffset, safeOffset + clampedMax);
+
+  return {
+    file_key,
+    content: slice,
+    offset: safeOffset,
+    total_length: content.length,
+    truncated: safeOffset + clampedMax < content.length,
+  };
+}
+
+export async function doRead(request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(
+      { error: { code: "VALIDATION_ERROR", message: "Invalid JSON body" } },
+      400,
+    );
+  }
+
+  if (typeof body !== "object" || body === null) {
+    return jsonResponse(
+      { error: { code: "VALIDATION_ERROR", message: "Invalid body" } },
+      400,
+    );
+  }
+
+  const b = body as Record<string, unknown>;
+  if (typeof b.file_key !== "string" || b.file_key.length === 0) {
+    return jsonResponse(
+      {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "file_key (string) is required",
+        },
+      },
+      400,
+    );
+  }
+
+  const offset =
+    typeof b.offset === "number" && b.offset >= 0 ? Math.floor(b.offset) : 0;
+  const max_chars =
+    typeof b.max_chars === "number" && b.max_chars > 0
+      ? Math.floor(b.max_chars)
+      : DEFAULT_READ_MAX_CHARS;
+
+  const result = await readCore(env, b.file_key, offset, max_chars);
+  if (result instanceof Response) return result;
+  return jsonResponse(result);
+}
+
+// ---------------------------------------------------------------------------
+// Grep — regex search on raw text from R2
+// ---------------------------------------------------------------------------
+
+const DEFAULT_GREP_MAX_MATCHES = 10;
+const MAX_GREP_MATCHES = 50;
+const DEFAULT_GREP_CONTEXT = 40;
+const MAX_GREP_CONTEXT = 200;
+
+export async function grepCore(
+  env: Env,
+  file_key: string,
+  pattern: string,
+  max_matches = DEFAULT_GREP_MAX_MATCHES,
+  context = DEFAULT_GREP_CONTEXT,
+): Promise<GrepResult | Response> {
+  const file = await env.DB.prepare(
+    "SELECT file_key, r2_key FROM files WHERE file_key = ?",
+  )
+    .bind(file_key)
+    .first<{ file_key: string; r2_key: string }>();
+
+  if (!file) {
+    return jsonResponse(
+      { error: { code: "NOT_FOUND", message: `File ${file_key} not found` } },
+      404,
+    );
+  }
+
+  const r2Obj = await env.RAW_BUCKET.get(file.r2_key);
+  if (!r2Obj) {
+    return jsonResponse(
+      {
+        error: {
+          code: "RAW_NOT_FOUND",
+          message: `Raw content for ${file_key} not found in R2`,
+        },
+      },
+      404,
+    );
+  }
+
+  const content = await r2Obj.text();
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, "g");
+  } catch {
+    return jsonResponse(
+      {
+        error: {
+          code: "INVALID_REGEX",
+          message: `Invalid regex pattern: ${pattern}`,
+        },
+      },
+      400,
+    );
+  }
+
+  const clampedMax = Math.min(max_matches, MAX_GREP_MATCHES);
+  const clampedContext = Math.min(context, MAX_GREP_CONTEXT);
+
+  const matches: GrepMatch[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(content)) !== null && matches.length < clampedMax) {
+    const start = m.index;
+    const end = m.index + m[0].length;
+    const ctxStart = Math.max(0, start - clampedContext);
+    const ctxEnd = Math.min(content.length, end + clampedContext);
+
+    matches.push({
+      match: m[0],
+      start,
+      end,
+      context: {
+        text: content.slice(ctxStart, ctxEnd),
+        start: ctxStart,
+        end: ctxEnd,
+      },
+    });
+
+    if (m[0].length === 0) {
+      regex.lastIndex++;
+    }
+  }
+
+  return {
+    file_key,
+    pattern,
+    matches,
+    total: matches.length,
+  };
+}
+
+export async function doGrep(request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(
+      { error: { code: "VALIDATION_ERROR", message: "Invalid JSON body" } },
+      400,
+    );
+  }
+
+  if (typeof body !== "object" || body === null) {
+    return jsonResponse(
+      { error: { code: "VALIDATION_ERROR", message: "Invalid body" } },
+      400,
+    );
+  }
+
+  const b = body as Record<string, unknown>;
+  if (typeof b.file_key !== "string" || b.file_key.length === 0) {
+    return jsonResponse(
+      {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "file_key (string) is required",
+        },
+      },
+      400,
+    );
+  }
+  if (typeof b.pattern !== "string" || b.pattern.length === 0) {
+    return jsonResponse(
+      {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "pattern (string) is required",
+        },
+      },
+      400,
+    );
+  }
+
+  const max_matches =
+    typeof b.max_matches === "number" && b.max_matches > 0
+      ? Math.floor(b.max_matches)
+      : DEFAULT_GREP_MAX_MATCHES;
+  const context =
+    typeof b.context === "number" && b.context >= 0
+      ? Math.floor(b.context)
+      : DEFAULT_GREP_CONTEXT;
+
+  const result = await grepCore(
+    env,
+    b.file_key,
+    b.pattern,
+    max_matches,
+    context,
+  );
+  if (result instanceof Response) return result;
+  return jsonResponse(result);
 }

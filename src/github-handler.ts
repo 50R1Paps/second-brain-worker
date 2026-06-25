@@ -22,6 +22,8 @@ import {
   doIngest,
   doRetrieve,
   doReindex,
+  doRead,
+  doGrep,
   handleCORS,
   type Env,
 } from "./handlers";
@@ -40,6 +42,10 @@ app.post("/api/ingest", (c) => doIngest(c.req.raw, c.env));
 app.post("/api/retrieve", (c) => doRetrieve(c.req.raw, c.env));
 
 app.post("/api/reindex", (c) => doReindex(c.req.raw, c.env));
+
+app.post("/api/read", (c) => doRead(c.req.raw, c.env));
+
+app.post("/api/grep", (c) => doGrep(c.req.raw, c.env));
 
 app.all("/api/*", (c) =>
   c.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404),

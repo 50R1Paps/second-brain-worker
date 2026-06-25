@@ -6,6 +6,8 @@ import {
   retrieveCore,
   ingestCore,
   validateIngestRequest,
+  readCore,
+  grepCore,
   type IngestRequest,
   type RetrieveRequest,
 } from "./handlers";
@@ -13,14 +15,21 @@ import type { Props } from "./oauth-utils";
 
 const ALLOWED_USERNAMES = new Set<string>([]);
 
-export class SecondBrainMCP extends McpAgent<Env, Record<string, never>, Props> {
+export class SecondBrainMCP extends McpAgent<
+  Env,
+  Record<string, never>,
+  Props
+> {
   server = new McpServer({
     name: "Second Brain",
     version: "1.0.0",
   });
 
   async init() {
-    if (ALLOWED_USERNAMES.size > 0 && !ALLOWED_USERNAMES.has(this.props!.login)) {
+    if (
+      ALLOWED_USERNAMES.size > 0 &&
+      !ALLOWED_USERNAMES.has(this.props!.login)
+    ) {
       return;
     }
 
@@ -99,14 +108,13 @@ export class SecondBrainMCP extends McpAgent<Env, Record<string, never>, Props> 
           .describe(
             "Unique identifier for the file. For wiki pages: relative path (e.g. 'wiki/concepts/Tool Attention.md'). For external files: 'filename:uuid'.",
           ),
-        content: z.string().describe("The full text content of the file to ingest."),
+        content: z
+          .string()
+          .describe("The full text content of the file to ingest."),
         file_type: z
           .enum(["wiki_page", "ingested"])
           .describe("The type of file being ingested."),
-        title: z
-          .string()
-          .optional()
-          .describe("Optional title for the file."),
+        title: z.string().optional().describe("Optional title for the file."),
         source: z
           .string()
           .optional()
@@ -246,6 +254,134 @@ export class SecondBrainMCP extends McpAgent<Env, Record<string, never>, Props> 
             {
               type: "text",
               text: `Reindexed ${count} file(s).`,
+            },
+          ],
+        };
+      },
+    );
+
+    this.server.tool(
+      "read",
+      "Read the raw text of an indexed file from R2 storage. Returns the text content with optional offset and character limit. Useful for reading the full context around a chunk found via retrieve.",
+      {
+        file_key: z
+          .string()
+          .describe("The file key of the indexed file to read."),
+        offset: z
+          .number()
+          .min(0)
+          .optional()
+          .describe("Character offset to start reading from. Defaults to 0."),
+        max_chars: z
+          .number()
+          .min(1)
+          .max(10000)
+          .optional()
+          .describe(
+            "Maximum number of characters to return. Defaults to 2000, max 10000.",
+          ),
+      },
+      async (params) => {
+        const result = await readCore(
+          this.env,
+          params.file_key,
+          params.offset ?? 0,
+          params.max_chars ?? 2000,
+        );
+
+        if (result instanceof Response) {
+          const body = await result.json();
+          return {
+            content: [{ type: "text", text: JSON.stringify(body) }],
+            isError: true,
+          };
+        }
+
+        const lines = [
+          `**File:** ${result.file_key}`,
+          `**Offset:** ${result.offset}`,
+          `**Total length:** ${result.total_length} chars`,
+          `**Truncated:** ${result.truncated}`,
+          "",
+          result.content,
+        ];
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+        };
+      },
+    );
+
+    this.server.tool(
+      "grep",
+      "Search for a regex pattern in the raw text of an indexed file. Returns matches with optional surrounding context. Useful for extracting structured data (dates, amounts, IDs) from documents.",
+      {
+        file_key: z
+          .string()
+          .describe("The file key of the indexed file to search."),
+        pattern: z.string().describe("JavaScript regex pattern to search for."),
+        max_matches: z
+          .number()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe(
+            "Maximum number of matches to return. Defaults to 10, max 50.",
+          ),
+        context: z
+          .number()
+          .min(0)
+          .max(200)
+          .optional()
+          .describe(
+            "Number of characters of context around each match. Defaults to 40, max 200.",
+          ),
+      },
+      async (params) => {
+        const result = await grepCore(
+          this.env,
+          params.file_key,
+          params.pattern,
+          params.max_matches ?? 10,
+          params.context ?? 40,
+        );
+
+        if (result instanceof Response) {
+          const body = await result.json();
+          return {
+            content: [{ type: "text", text: JSON.stringify(body) }],
+            isError: true,
+          };
+        }
+
+        if (result.matches.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No matches found for pattern "${params.pattern}" in ${params.file_key}.`,
+              },
+            ],
+          };
+        }
+
+        const formatted = result.matches
+          .map((m, i) => {
+            const lines = [
+              `### Match ${i + 1}`,
+              `**Match:** \`${m.match}\``,
+              `**Position:** ${m.start}-${m.end}`,
+              m.context ? `**Context:** ...${m.context.text}...` : "",
+            ].filter(Boolean);
+            return lines.join("\n");
+          })
+          .join("\n\n");
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Found ${result.total} match(es) in ${params.file_key}:\n\n${formatted}`,
             },
           ],
         };
