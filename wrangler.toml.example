@@ -10,7 +10,7 @@ bucket_name = "second-brain-raw"
 [[d1_databases]]
 binding = "DB"
 database_name = "second-brain"
-database_id = "<da-creare>"
+database_id = "<your-d1-database-id>"
 migrations_dir = "migrations"
 
 [[vectorize]]
