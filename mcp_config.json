@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "second-brain": {
+      "command": "npx",
+      "args": [
+        "workers-mcp",
+        "proxy",
+        "https://second-brain.<account>.workers.dev/mcp"
+      ]
+    }
+  }
+}

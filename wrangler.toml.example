@@ -1,7 +1,7 @@
 name = "second-brain"
 main = "src/worker.ts"
 compatibility_date = "2024-09-01"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [[r2_buckets]]
 binding = "RAW_BUCKET"
@@ -19,3 +19,23 @@ index_name = "second-brain-embeddings"
 
 [ai]
 binding = "AI"
+
+# OAuth — KV for state/CSRF tokens
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "<your-kv-namespace-id>"
+
+# Durable Object for McpAgent
+[durable_objects]
+bindings = [
+  { name = "SECOND_BRAIN_MCP", class_name = "SecondBrainMCP" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SecondBrainMCP"]
+
+# OAuth secrets (set via `wrangler secret put`):
+# GITHUB_CLIENT_ID
+# GITHUB_CLIENT_SECRET
+# COOKIE_ENCRYPTION_KEY

@@ -1,0 +1,157 @@
+import { describe, it, expect } from "vitest";
+import { SELF } from "cloudflare:test";
+import { ensureSchema } from "./setup";
+
+const SAMPLE_MARKDOWN = `---
+title: MCP Test Page
+tags: [test]
+---
+## Introduction
+This is a test page about [[Tool Attention]] and related concepts.
+
+## Details
+The system uses markdown chunking with overlap to preserve context.
+It should not split [[Wikilinks]] across chunk boundaries.`;
+
+async function ingestFile(
+  file_key: string,
+  content: string,
+  file_type: "wiki_page" | "ingested" = "wiki_page",
+  title?: string,
+) {
+  await SELF.fetch("http://localhost/api/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_key, content, file_type, title }),
+  });
+}
+
+describe("MCP — REST API still works through OAuthProvider", () => {
+  it("GET /api/health returns ok", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/health");
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      status: string;
+      version: string;
+    }>();
+    expect(data.status).toBe("ok");
+    expect(data.version).toBe("1.0.0");
+  });
+
+  it("POST /api/ingest works through new routing", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/mcp-test.md",
+        content: SAMPLE_MARKDOWN,
+        file_type: "wiki_page",
+        title: "MCP Test Page",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string;
+      chunk_count: number;
+      status: string;
+    }>();
+    expect(data.file_key).toBe("wiki/mcp-test.md");
+    expect(data.chunk_count).toBeGreaterThan(0);
+    expect(data.status).toBe("ok");
+  });
+
+  it("POST /api/retrieve works through new routing", async () => {
+    await ensureSchema();
+    await ingestFile(
+      "wiki/mcp-retrieve.md",
+      SAMPLE_MARKDOWN,
+      "wiki_page",
+      "MCP Retrieve Test",
+    );
+
+    const response = await SELF.fetch("http://localhost/api/retrieve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "markdown chunking" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      query: string;
+      results: Array<{ file_key: string; content: string }>;
+      total: number;
+    }>();
+    expect(data.query).toBe("markdown chunking");
+    expect(data.results.length).toBeGreaterThan(0);
+    expect(data.results[0].content).toContain("markdown");
+  });
+});
+
+describe("MCP — reindex endpoint", () => {
+  it("POST /api/reindex reindexes a single file", async () => {
+    await ensureSchema();
+    await ingestFile("wiki/mcp-reindex.md", "## Original\nFirst content");
+
+    const response = await SELF.fetch("http://localhost/api/reindex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_key: "wiki/mcp-reindex.md" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string;
+      reindexed: number;
+      status: string;
+    }>();
+    expect(data.file_key).toBe("wiki/mcp-reindex.md");
+    expect(data.reindexed).toBe(1);
+    expect(data.status).toBe("ok");
+  });
+
+  it("POST /api/reindex returns 404 for unknown file", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/reindex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_key: "wiki/nonexistent.md" }),
+    });
+
+    expect(response.status).toBe(404);
+    const data = await response.json<{ error: { code: string } }>();
+    expect(data.error.code).toBe("NOT_FOUND");
+  });
+
+  it("POST /api/reindex reindexes all files when no file_key", async () => {
+    await ensureSchema();
+    await ingestFile("wiki/mcp-reindex-all-1.md", "## File 1\nContent 1");
+    await ingestFile("wiki/mcp-reindex-all-2.md", "## File 2\nContent 2");
+
+    const response = await SELF.fetch("http://localhost/api/reindex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string | null;
+      reindexed: number;
+      status: string;
+    }>();
+    expect(data.file_key).toBeNull();
+    expect(data.reindexed).toBeGreaterThanOrEqual(2);
+    expect(data.status).toBe("ok");
+  });
+});
+
+describe("MCP — /mcp endpoint exists", () => {
+  it("responds to /mcp path (not 404)", async () => {
+    const response = await SELF.fetch("http://localhost/mcp", {
+      method: "GET",
+    });
+    expect(response.status).not.toBe(404);
+  });
+});
