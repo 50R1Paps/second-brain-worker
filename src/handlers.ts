@@ -12,6 +12,7 @@ export interface Env {
   COOKIE_ENCRYPTION_KEY: string;
   WEBHOOK_SECRET: string;
   GITHUB_TOKEN: string;
+  GITHUB_TOKEN_EXPIRY: string;
   SECOND_BRAIN_MCP: DurableObjectNamespace;
 }
 

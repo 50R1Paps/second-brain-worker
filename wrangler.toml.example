@@ -43,3 +43,8 @@ new_sqlite_classes = ["SecondBrainMCP"]
 # GitHub webhook sync secrets (set via `wrangler secret put`):
 # WEBHOOK_SECRET
 # GITHUB_TOKEN
+# GITHUB_TOKEN_EXPIRY (ISO date string, e.g. 2026-09-25T00:00:00Z)
+
+# Cron trigger: daily check for token expiry reminder
+[triggers]
+crons = ["0 9 * * *"]

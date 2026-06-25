@@ -9,6 +9,7 @@ GITHUB_TOKEN = "test-github-token"
 GITHUB_CLIENT_ID = "test-github-client-id"
 GITHUB_CLIENT_SECRET = "test-github-client-secret"
 COOKIE_ENCRYPTION_KEY = "test-cookie-encryption-key-32-bytes"
+GITHUB_TOKEN_EXPIRY = "2099-01-01T00:00:00Z"
 
 [[r2_buckets]]
 binding = "RAW_BUCKET"

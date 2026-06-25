@@ -1,6 +1,7 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { GitHubHandler } from "./github-handler";
 import { SecondBrainMCP } from "./mcp";
+import { handleScheduled } from "./cron";
 import type { Env } from "./handlers";
 
 export { SecondBrainMCP };
@@ -24,5 +25,12 @@ function getProvider(): OAuthProvider {
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return getProvider().fetch(request, env, ctx) as Promise<Response>;
+  },
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(handleScheduled(env));
   },
 };

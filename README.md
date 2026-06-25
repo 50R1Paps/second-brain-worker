@@ -185,6 +185,7 @@ npx wrangler secret put COOKIE_ENCRYPTION_KEY
 # GitHub webhook sync (opzionale, solo se usi il sync automatico)
 npx wrangler secret put WEBHOOK_SECRET
 npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret put GITHUB_TOKEN_EXPIRY
 ```
 
 Per `COOKIE_ENCRYPTION_KEY` puoi generare una stringa casuale con:
@@ -196,6 +197,8 @@ openssl rand -hex 32
 Per `GITHUB_TOKEN`, crea un [Personal Access Token](https://github.com/settings/tokens) con scope `repo` (per leggere i file `.md` via API).
 
 Per `WEBHOOK_SECRET`, genera un'altra stringa casuale e usala anche come secret del webhook GitHub.
+
+Per `GITHUB_TOKEN_EXPIRY`, inserisci la data di scadenza del PAT in formato ISO (es. `2026-09-25T00:00:00Z`). Il Cron Trigger giornaliero controlla questa data e apre automaticamente una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza come promemoria.
 
 ### 7. Deploy
 
@@ -240,26 +243,31 @@ Da ora, ogni push su `main` che modifica file `.md` in `wiki/` triggera la re-in
 
 I secret sono gestiti via `wrangler secret put` e stored nella dashboard Cloudflare (mai nel codice). Ecco quando aggiornarli:
 
-| Secret                  | Scade?                                             | Quando aggiornare                                                                                      |
-| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `GITHUB_TOKEN`          | **Sì** — scade in base alla configurazione del PAT | Quando il Personal Access Token scade: `npx wrangler secret put GITHUB_TOKEN` e incolla il nuovo token |
-| `GITHUB_CLIENT_ID`      | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                           |
-| `GITHUB_CLIENT_SECRET`  | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                           |
-| `COOKIE_ENCRYPTION_KEY` | No                                                 | Mai (a meno che tu non voglia invalidare tutte le sessioni attive)                                     |
-| `WEBHOOK_SECRET`        | No                                                 | Mai (deve coincidere con il secret configurato nelle impostazioni webhook su GitHub)                   |
+| Secret                  | Scade?                                             | Quando aggiornare                                                                                           |
+| ----------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GITHUB_TOKEN`          | **Sì** — scade in base alla configurazione del PAT | Quando il Personal Access Token scade: `npx wrangler secret put GITHUB_TOKEN` e incolla il nuovo token      |
+| `GITHUB_TOKEN_EXPIRY`   | **Sì** — da aggiornare insieme al token            | Quando aggiorni `GITHUB_TOKEN`: `npx wrangler secret put GITHUB_TOKEN_EXPIRY` con la nuova data di scadenza |
+| `GITHUB_CLIENT_ID`      | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                                |
+| `GITHUB_CLIENT_SECRET`  | No                                                 | Solo se revochi/ricrei l'OAuth App su GitHub                                                                |
+| `COOKIE_ENCRYPTION_KEY` | No                                                 | Mai (a meno che tu non voglia invalidare tutte le sessioni attive)                                          |
+| `WEBHOOK_SECRET`        | No                                                 | Mai (deve coincidere con il secret configurato nelle impostazioni webhook su GitHub)                        |
 
 ### Rotazione del `GITHUB_TOKEN`
 
-Il `GITHUB_TOKEN` (Personal Access Token con scope `repo`) è l'unico secret con scadenza. Quando scade:
+Il `GITHUB_TOKEN` (Personal Access Token con scope `repo`) è l'unico secret con scadenza. Un Cron Trigger giornaliero controlla `GITHUB_TOKEN_EXPIRY` e apre automaticamente una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza come promemoria.
+
+Quando ricevi la notifica (o quando il token è già scaduto):
 
 1. Crea un nuovo token su [GitHub Settings > Tokens](https://github.com/settings/tokens) con scope `repo`
-2. Aggiorna il secret su Cloudflare:
+2. Aggiorna i secret su Cloudflare:
 
 ```bash
 npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret put GITHUB_TOKEN_EXPIRY
 ```
 
-3. Incolla il nuovo token quando richiesto
+3. Incolla il nuovo token e la nuova data di scadenza (formato ISO, es. `2026-09-25T00:00:00Z`)
+4. Chiudi la issue di promemoria su GitHub
 
 Nessun altro secret o configurazione su Cloudflare deve essere aggiornato.
 
@@ -338,6 +346,7 @@ src/
 ├── github-handler.ts  # Hono app: REST API + OAuth flow (/authorize, /callback)
 ├── oauth-utils.ts     # Utility OAuth: state, CSRF, cookie, approval dialog
 ├── webhook.ts         # GitHub webhook handler per sync automatico
+├── cron.ts            # Cron Trigger: reminder scadenza GITHUB_TOKEN via GitHub Issue
 └── setup.ts           # Logica del setup script (ingest bulk)
 
 migrations/
