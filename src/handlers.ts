@@ -511,15 +511,37 @@ export async function ingestCore(
   }
 }
 
+const EMBEDDING_BATCH_SIZE = 5;
+
 async function generateEmbeddings(
   ai: Ai,
   chunks: Chunk[],
 ): Promise<number[][] | null> {
   try {
-    const inputs = chunks.map((c) => ({ text: c.content }));
-    const result = await ai.run(EMBEDDING_MODEL, { inputs } as never);
-    const data = result as { data?: number[][] };
-    return data.data ?? null;
+    const allEmbeddings: number[][] = [];
+    for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
+      const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+      const texts = batch.map((c) => c.content);
+      let result = (await ai.run(EMBEDDING_MODEL, {
+        text: texts,
+      } as never)) as { data?: number[][] };
+
+      if (!result.data) {
+        for (const c of batch) {
+          try {
+            const single = (await ai.run(EMBEDDING_MODEL, {
+              text: [c.content],
+            } as never)) as { data?: number[][] };
+            allEmbeddings.push(single.data?.[0] ?? new Array(768).fill(0));
+          } catch {
+            allEmbeddings.push(new Array(768).fill(0));
+          }
+        }
+      } else {
+        allEmbeddings.push(...result.data);
+      }
+    }
+    return allEmbeddings;
   } catch {
     return null;
   }
