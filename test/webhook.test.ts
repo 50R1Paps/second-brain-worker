@@ -52,7 +52,7 @@ describe("POST /webhook/github - authentication", () => {
         "Content-Type": "application/json",
         "X-Hub-Signature-256": "sha256=invalid",
       },
-      body: JSON.stringify({ ref: "refs/heads/main", commits: [] }),
+      body: JSON.stringify({ ref: "refs/heads/master", commits: [] }),
     });
 
     expect(response.status).toBe(401);
@@ -89,7 +89,7 @@ describe("POST /webhook/github - push handling", () => {
   it("fetches and ingests added and modified markdown files in wiki", async () => {
     await ensureSchema();
     const request = await signedRequest({
-      ref: "refs/heads/main",
+      ref: "refs/heads/master",
       commits: [
         {
           added: ["wiki/concepts/Tool Attention.md", "README.md"],
@@ -151,7 +151,7 @@ describe("POST /webhook/github - push handling", () => {
     });
 
     const request = await signedRequest({
-      ref: "refs/heads/main",
+      ref: "refs/heads/master",
       commits: [{ removed: ["wiki/delete-me.md", "docs/delete-me.md"] }],
     });
     const response = await handleGitHubWebhook(
@@ -187,7 +187,7 @@ describe("POST /webhook/github - push handling", () => {
   it("skips commits made by the Worker to avoid ingest loops", async () => {
     await ensureSchema();
     const request = await signedRequest({
-      ref: "refs/heads/main",
+      ref: "refs/heads/master",
       commits: [
         {
           message:

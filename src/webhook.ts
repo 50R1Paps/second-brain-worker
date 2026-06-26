@@ -9,7 +9,7 @@ import {
 
 const GITHUB_OWNER = "50R1Paps";
 const GITHUB_REPO = "Mysecondbrain";
-const MAIN_REF = "refs/heads/main";
+const MAIN_REF = "refs/heads/master";
 
 type FetchFunction = typeof fetch;
 
@@ -180,7 +180,7 @@ async function fetchGitHubMarkdown(
 ): Promise<string> {
   const encodedPath = fileKey.split("/").map(encodeURIComponent).join("/");
   const response = await fetchFn(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodedPath}?ref=main`,
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodedPath}?ref=master`,
     {
       headers: {
         Accept: "application/vnd.github+json",

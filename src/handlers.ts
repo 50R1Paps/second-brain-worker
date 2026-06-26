@@ -230,6 +230,7 @@ async function pushToGitHub(
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     "Content-Type": "application/json",
+    "User-Agent": "second-brain-worker",
   };
 
   // Check if file already exists (need SHA for update)
@@ -247,7 +248,7 @@ async function pushToGitHub(
   const body = {
     message: `chore: ingest ${fileKey} via Second Brain Worker`,
     content: btoa(content),
-    branch: "main",
+    branch: "master",
     ...(sha ? { sha } : {}),
   };
 
@@ -258,11 +259,14 @@ async function pushToGitHub(
   });
 
   if (!response.ok) {
-    const errData = (await response.json()) as { message?: string };
-    return {
-      pushed: false,
-      error: `GitHub API ${response.status}: ${errData.message ?? "unknown error"}`,
-    };
+    let errMessage = `GitHub API ${response.status}`;
+    try {
+      const errText = await response.text();
+      errMessage += `: ${errText.slice(0, 200)}`;
+    } catch {
+      // ignore
+    }
+    return { pushed: false, error: errMessage };
   }
 
   return { pushed: true };
