@@ -119,6 +119,12 @@ export class SecondBrainMCP extends McpAgent<
           .string()
           .optional()
           .describe("Optional source URL or path for the file."),
+        push_to_github: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true and file_type is 'wiki_page', also creates/updates the file in the GitHub wiki repository. Default: false.",
+          ),
       },
       async (params) => {
         const ingestReq: IngestRequest = {
@@ -127,6 +133,7 @@ export class SecondBrainMCP extends McpAgent<
           file_type: params.file_type,
           title: params.title,
           source: params.source,
+          push_to_github: params.push_to_github,
         };
 
         const validated = validateIngestRequest(ingestReq);
@@ -156,7 +163,7 @@ export class SecondBrainMCP extends McpAgent<
           content: [
             {
               type: "text",
-              text: `Ingested ${result.file_key}: ${result.chunk_count} chunks, status: ${result.status}`,
+              text: `Ingested ${result.file_key}: ${result.chunk_count} chunks, status: ${result.status}${result.github_pushed !== undefined ? `, github_pushed: ${result.github_pushed}` : ""}${result.github_error ? `, github_error: ${result.github_error}` : ""}`,
             },
           ],
         };

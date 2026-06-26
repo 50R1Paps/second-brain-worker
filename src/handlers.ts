@@ -35,12 +35,15 @@ export interface IngestRequest {
   file_type: "wiki_page" | "ingested";
   title?: string;
   source?: string;
+  push_to_github?: boolean;
 }
 
 export interface IngestResult {
   file_key: string;
   chunk_count: number;
   status: string;
+  github_pushed?: boolean;
+  github_error?: string;
 }
 
 export interface RetrieveFilter {
@@ -205,6 +208,66 @@ export async function doHealth(env: Env): Promise<Response> {
 // Ingest
 // ---------------------------------------------------------------------------
 
+const GITHUB_OWNER = "50R1Paps";
+const GITHUB_REPO = "Mysecondbrain";
+
+type FetchFunction = typeof fetch;
+
+async function pushToGitHub(
+  env: Env,
+  fileKey: string,
+  content: string,
+  fetchFn: FetchFunction = fetch,
+): Promise<{ pushed: boolean; error?: string }> {
+  if (!env.GITHUB_TOKEN) {
+    return { pushed: false, error: "GITHUB_TOKEN not configured" };
+  }
+
+  const encodedPath = fileKey.split("/").map(encodeURIComponent).join("/");
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodedPath}`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+  };
+
+  // Check if file already exists (need SHA for update)
+  let sha: string | undefined;
+  try {
+    const existing = await fetchFn(apiUrl, { headers });
+    if (existing.ok) {
+      const data = (await existing.json()) as { sha?: string };
+      sha = data.sha;
+    }
+  } catch {
+    // File doesn't exist yet, proceed without SHA
+  }
+
+  const body = {
+    message: `chore: ingest ${fileKey} via Second Brain Worker`,
+    content: btoa(content),
+    branch: "main",
+    ...(sha ? { sha } : {}),
+  };
+
+  const response = await fetchFn(apiUrl, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errData = (await response.json()) as { message?: string };
+    return {
+      pushed: false,
+      error: `GitHub API ${response.status}: ${errData.message ?? "unknown error"}`,
+    };
+  }
+
+  return { pushed: true };
+}
+
 export function validateIngestRequest(body: unknown): IngestRequest | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
@@ -217,6 +280,8 @@ export function validateIngestRequest(body: unknown): IngestRequest | null {
     file_type: b.file_type,
     title: typeof b.title === "string" ? b.title : undefined,
     source: typeof b.source === "string" ? b.source : undefined,
+    push_to_github:
+      typeof b.push_to_github === "boolean" ? b.push_to_github : undefined,
   };
 }
 
@@ -355,10 +420,29 @@ export async function ingestCore(
 
     await env.DB.batch(dbStatements);
 
+    let githubPushed: boolean | undefined;
+    let githubError: string | undefined;
+
+    if (parsed.push_to_github && file_type === "wiki_page") {
+      try {
+        const ghResult = await pushToGitHub(env, file_key, content);
+        githubPushed = ghResult.pushed;
+        if (!ghResult.pushed) {
+          githubError = ghResult.error;
+        }
+      } catch (err) {
+        githubPushed = false;
+        githubError =
+          err instanceof Error ? err.message : "Unknown GitHub push error";
+      }
+    }
+
     return {
       file_key,
       chunk_count: chunks.length,
       status: "ok",
+      ...(githubPushed !== undefined ? { github_pushed: githubPushed } : {}),
+      ...(githubError ? { github_error: githubError } : {}),
     };
   } catch (err) {
     return jsonResponse(

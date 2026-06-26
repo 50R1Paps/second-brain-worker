@@ -218,3 +218,70 @@ describe("POST /api/ingest — error handling", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("POST /api/ingest — push_to_github", () => {
+  it("accepts push_to_github and returns github_pushed field", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/github-push-test.md",
+        content: "## Test\nContent for GitHub push",
+        file_type: "wiki_page",
+        push_to_github: true,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      file_key: string;
+      chunk_count: number;
+      status: string;
+      github_pushed?: boolean;
+      github_error?: string;
+    }>();
+    expect(data.file_key).toBe("wiki/github-push-test.md");
+    expect(data.chunk_count).toBeGreaterThan(0);
+    expect(data.github_pushed).toBeDefined();
+    // With test GITHUB_TOKEN, the push will fail
+    expect(data.github_pushed).toBe(false);
+    expect(data.github_error).toBeDefined();
+  });
+
+  it("does not include github_pushed when push_to_github is not set", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/no-push-test.md",
+        content: "## Test\nNo push",
+        file_type: "wiki_page",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      github_pushed?: boolean;
+    }>();
+    expect(data.github_pushed).toBeUndefined();
+  });
+
+  it("does not push to GitHub for ingested file type even with push_to_github", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "external-file:abc123",
+        content: "## External\nExternal content",
+        file_type: "ingested",
+        push_to_github: true,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      github_pushed?: boolean;
+    }>();
+    expect(data.github_pushed).toBeUndefined();
+  });
+});
