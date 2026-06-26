@@ -121,9 +121,9 @@ export class SecondBrainMCP extends McpAgent<
           .describe("Optional source URL or path for the file."),
         push_to_github: z
           .boolean()
-          .optional()
+          .default(true)
           .describe(
-            "If true and file_type is 'wiki_page', also creates/updates the file in the GitHub wiki repository. Default: false.",
+            "If true (default) and file_type is 'wiki_page', also creates/updates the file in the GitHub wiki repository. Set to false to skip GitHub write-back.",
           ),
       },
       async (params) => {

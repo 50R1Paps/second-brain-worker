@@ -248,15 +248,34 @@ describe("POST /api/ingest — push_to_github", () => {
     expect(data.github_error).toBeDefined();
   });
 
-  it("does not include github_pushed when push_to_github is not set", async () => {
+  it("defaults to pushing wiki_page to GitHub when push_to_github not specified", async () => {
     await ensureSchema();
     const response = await SELF.fetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        file_key: "wiki/no-push-test.md",
-        content: "## Test\nNo push",
+        file_key: "wiki/default-push-test.md",
+        content: "## Test\nDefault push",
         file_type: "wiki_page",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      github_pushed?: boolean;
+    }>();
+    expect(data.github_pushed).toBeDefined();
+  });
+
+  it("does not push to GitHub when push_to_github is explicitly false", async () => {
+    await ensureSchema();
+    const response = await SELF.fetch("http://localhost/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_key: "wiki/no-push-explicit.md",
+        content: "## Test\nExplicit no push",
+        file_type: "wiki_page",
+        push_to_github: false,
       }),
     });
     expect(response.status).toBe(200);

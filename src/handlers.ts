@@ -423,7 +423,7 @@ export async function ingestCore(
     let githubPushed: boolean | undefined;
     let githubError: string | undefined;
 
-    if (parsed.push_to_github && file_type === "wiki_page") {
+    if (file_type === "wiki_page" && parsed.push_to_github !== false) {
       try {
         const ghResult = await pushToGitHub(env, file_key, content);
         githubPushed = ghResult.pushed;
