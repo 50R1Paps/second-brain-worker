@@ -96,13 +96,16 @@ Re-indicizza un file specifico o tutti i file. Legge il raw da R2, re-esegue chu
 
 Oltre ai tool MCP, il Worker espone endpoint REST (non autenticati, utili per script e setup):
 
-| Metodo | Endpoint          | Descrizione                                      |
-| ------ | ----------------- | ------------------------------------------------ |
-| GET    | `/api/health`     | Stato del Worker: file indicizzati, chunk totali |
-| POST   | `/api/ingest`     | Ingest di un file (stesso formato del tool MCP)  |
-| POST   | `/api/retrieve`   | Retrieve ibrido (stesso formato del tool MCP)    |
-| POST   | `/api/reindex`    | Reindex di un file o di tutti                    |
-| POST   | `/webhook/github` | Webhook GitHub per sync automatico               |
+| Metodo | Endpoint          | Descrizione                                                       |
+| ------ | ----------------- | ----------------------------------------------------------------- |
+| GET    | `/api/health`     | Stato del Worker: file indicizzati, chunk totali                  |
+| POST   | `/api/ingest`     | Ingest di un file (stesso formato del tool MCP)                   |
+| POST   | `/api/retrieve`   | Retrieve ibrido (stesso formato del tool MCP)                     |
+| POST   | `/api/reindex`    | Reindex di un file o di tutti                                     |
+| GET    | `/api/read`       | Leggi raw text da R2 con offset/limit                             |
+| POST   | `/api/grep`       | Ricerca regex sul contenuto indicizzato                           |
+| GET    | `/api/metrics`    | Metriche aggregate di retrieve (latency, score, zero-result rate) |
+| POST   | `/webhook/github` | Webhook GitHub per sync automatico                                |
 
 ---
 
@@ -350,7 +353,8 @@ src/
 └── setup.ts           # Logica del setup script (ingest bulk)
 
 migrations/
-└── 0001_initial_schema.sql  # Schema D1: files, chunks, chunks_fts + trigger
+├── 0001_initial_schema.sql       # Schema D1: files, chunks, chunks_fts + trigger
+└── 0002_retrieve_metrics.sql     # Tabella retrieve_metrics per observability
 
 scripts/
 └── setup.ts           # CLI entry point per il setup script
@@ -366,6 +370,84 @@ npm run typecheck  # type checking
 ```
 
 I test usano `@cloudflare/vitest-pool-workers` per simulare l'ambiente Workers con D1, R2, e AI bindings.
+
+---
+
+## Operazioni di manutenzione
+
+### Deploy del Worker
+
+Dopo aver modificato il codice:
+
+```bash
+npm run typecheck   # verifica tipi
+npm test            # verifica test
+npx wrangler deploy # deploy su Cloudflare
+```
+
+Non serve reindicizzare dopo un deploy che non cambia la logica di ingest/retrieve.
+
+### Applicare una nuova migration D1
+
+Quando aggiungi una migration (es. `0002_retrieve_metrics.sql`):
+
+```bash
+# Locale (per dev)
+npm run db:migrate
+
+# Remoto (per produzione)
+npx wrangler d1 migrations apply second-brain --remote
+```
+
+La migration va applicata **prima** del deploy se il codice dipende dalla nuova tabella.
+
+### Reindicizzare i documenti (popolare Vectorize)
+
+Se i vettori sono mancanti o vuoi rigenerare gli embeddings:
+
+```bash
+# Reindex di un singolo file
+curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
+  -H "Content-Type: application/json" \
+  -d '{"file_key": "wiki/concepts/Esempio.md"}'
+
+# Reindex di tutti i file (attenzione: può hit rate limit su Workers AI)
+curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Nota:** il reindex di tutti i file (113+) può fallire per rate limiting di Workers AI.
+Se `semantic_hits` è 0 dopo un reindex completo, reindicizza i file singolarmente
+con una pausa di ~1 secondo tra ogni chiamata. Verifica lo stato con:
+
+```bash
+npx wrangler d1 execute second-brain --remote \
+  --command "SELECT COUNT(*) as total, COUNT(vector_id) as with_vectors FROM chunks"
+```
+
+### Verificare le metriche di retrieve
+
+Dopo aver fatto qualche retrieve, controlla le metriche aggregate:
+
+```bash
+# Ultime 24 ore (default)
+curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics
+
+# Ultima ora
+curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=1h
+
+# Ultimi 7 giorni
+curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=7d
+
+# Ultimi 30 giorni
+curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=30d
+```
+
+Periodi validi: `1h`, `24h`, `7d`, `30d`.
+
+Le metriche includono: total queries, zero-result rate, avg/p50/p95 latency,
+score distribution, e search type breakdown (semantic/keyword/hybrid).
 
 ---
 
@@ -387,3 +469,5 @@ I test usano `@cloudflare/vitest-pool-workers` per simulare l'ambiente Workers c
 - Il content dei risultati viene troncato a 2000 caratteri per chunk
 - L'OAuth flow supporta solo GitHub come identity provider
 - Il webhook sync processa solo file `.md` nella cartella `wiki/` su push a `main`
+- I commit automatici del Worker su GitHub includono `[skip ci]` per non triggerare la pipeline di lint
+- Le metriche di retrieve sono best-effort: se la persistenza su D1 fallisce, il retrieve non viene interrotto
