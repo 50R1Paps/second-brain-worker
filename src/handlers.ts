@@ -213,6 +213,33 @@ const GITHUB_REPO = "Mysecondbrain";
 
 type FetchFunction = typeof fetch;
 
+export function ensureFrontmatter(content: string, fileKey: string): string {
+  const fmMatch = content.match(/^---\n(.*?)\n---/s);
+  const now = new Date().toISOString().slice(0, 10);
+  const defaultTitle =
+    fileKey.split("/").pop()?.replace(/\.md$/i, "") ?? "Untitled";
+
+  if (!fmMatch) {
+    return `---\ntitle: "${defaultTitle}"\ntype: wiki\ncreated: ${now}\nupdated: ${now}\n---\n${content}`;
+  }
+
+  const fm = fmMatch[1];
+  const patches: Record<string, string> = {};
+  if (!/^\s*title:/m.test(fm)) patches["title"] = `"${defaultTitle}"`;
+  if (!/^\s*type:/m.test(fm)) patches["type"] = "wiki";
+  if (!/^\s*created:/m.test(fm)) patches["created"] = now;
+  if (!/^\s*updated:/m.test(fm)) patches["updated"] = now;
+
+  if (Object.keys(patches).length === 0) return content;
+
+  const lines = fm.split("\n");
+  for (const [key, value] of Object.entries(patches)) {
+    lines.push(`${key}: ${value}`);
+  }
+  const newFm = lines.join("\n");
+  return content.replace(/^---\n.*?\n---/s, `---\n${newFm}\n---`);
+}
+
 async function pushToGitHub(
   env: Env,
   fileKey: string,
@@ -222,6 +249,8 @@ async function pushToGitHub(
   if (!env.GITHUB_TOKEN) {
     return { pushed: false, error: "GITHUB_TOKEN not configured" };
   }
+
+  const safeContent = ensureFrontmatter(content, fileKey);
 
   const encodedPath = fileKey.split("/").map(encodeURIComponent).join("/");
   const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodedPath}`;
@@ -247,7 +276,7 @@ async function pushToGitHub(
 
   const body = {
     message: `chore: ingest ${fileKey} via Second Brain Worker`,
-    content: btoa(content),
+    content: btoa(safeContent),
     branch: "master",
     ...(sha ? { sha } : {}),
   };
