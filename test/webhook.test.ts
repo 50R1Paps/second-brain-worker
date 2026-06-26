@@ -146,6 +146,7 @@ describe("POST /webhook/github - push handling", () => {
         file_key: "wiki/delete-me.md",
         content: "# Delete me\n\nContent",
         file_type: "wiki_page",
+        push_to_github: false,
       }),
     });
 
@@ -181,5 +182,39 @@ describe("POST /webhook/github - push handling", () => {
 
     expect(file).toBeNull();
     expect(object).toBeNull();
+  });
+
+  it("skips commits made by the Worker to avoid ingest loops", async () => {
+    await ensureSchema();
+    const request = await signedRequest({
+      ref: "refs/heads/main",
+      commits: [
+        {
+          message:
+            "chore: ingest wiki/concepts/NewConcept.md via Second Brain Worker",
+          added: ["wiki/concepts/NewConcept.md"],
+        },
+      ],
+    });
+    let fetchCalls = 0;
+
+    const response = await handleGitHubWebhook(
+      request,
+      env as unknown as Env,
+      async () => {
+        fetchCalls++;
+        return githubContentResponse("# Should not be fetched");
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json<{
+      processed: number;
+      ingested: number;
+      status: string;
+    }>();
+    expect(data.processed).toBe(0);
+    expect(data.ingested).toBe(0);
+    expect(fetchCalls).toBe(0);
   });
 });

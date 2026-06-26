@@ -17,6 +17,7 @@ interface GitHubPushCommit {
   added?: string[];
   modified?: string[];
   removed?: string[];
+  message?: string;
 }
 
 interface GitHubPushPayload {
@@ -132,6 +133,13 @@ function collectWikiMarkdownChanges(payload: GitHubPushPayload): {
   let ignored = 0;
 
   for (const commit of payload.commits ?? []) {
+    // Skip commits made by the Worker itself to avoid ingest loops
+    if (
+      commit.message?.startsWith("chore: ingest ") &&
+      commit.message?.includes("via Second Brain Worker")
+    ) {
+      continue;
+    }
     for (const path of [...(commit.added ?? []), ...(commit.modified ?? [])]) {
       if (isWikiMarkdown(path)) {
         removed.delete(path);

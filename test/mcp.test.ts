@@ -22,7 +22,13 @@ async function ingestFile(
   await SELF.fetch("http://localhost/api/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file_key, content, file_type, title }),
+    body: JSON.stringify({
+      file_key,
+      content,
+      file_type,
+      title,
+      push_to_github: false,
+    }),
   });
 }
 
@@ -49,6 +55,7 @@ describe("MCP — REST API still works through OAuthProvider", () => {
         content: SAMPLE_MARKDOWN,
         file_type: "wiki_page",
         title: "MCP Test Page",
+        push_to_github: false,
       }),
     });
     expect(response.status).toBe(200);

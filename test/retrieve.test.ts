@@ -32,7 +32,13 @@ async function ingestFile(
   await SELF.fetch("http://localhost/api/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file_key, content, file_type, title }),
+    body: JSON.stringify({
+      file_key,
+      content,
+      file_type,
+      title,
+      push_to_github: false,
+    }),
   });
 }
 
@@ -237,10 +243,7 @@ describe("POST /api/retrieve — filters", () => {
 
   it("filters by file_key_prefix", async () => {
     await ensureSchema();
-    await ingestFile(
-      "wiki/concepts/retrieve-prefix.md",
-      MARKDOWN_ARCHITECTURE,
-    );
+    await ingestFile("wiki/concepts/retrieve-prefix.md", MARKDOWN_ARCHITECTURE);
     await ingestFile("wiki/other/retrieve-other.md", MARKDOWN_ARCHITECTURE);
 
     const response = await SELF.fetch("http://localhost/api/retrieve", {

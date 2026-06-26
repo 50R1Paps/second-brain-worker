@@ -80,6 +80,7 @@ describe("POST /api/ingest — successful ingestion", () => {
         file_type: "wiki_page",
         title: "Test Page",
         source: "wiki/concepts/Test.md",
+        push_to_github: false,
       }),
     });
     expect(response.status).toBe(200);
@@ -102,6 +103,7 @@ describe("POST /api/ingest — successful ingestion", () => {
         file_key: "wiki/r2-test.md",
         content: "## Hello\nWorld",
         file_type: "wiki_page",
+        push_to_github: false,
       }),
     });
 
@@ -124,6 +126,7 @@ describe("POST /api/ingest — successful ingestion", () => {
         file_type: "wiki_page",
         title: "D1 Test",
         source: "wiki/d1-test.md",
+        push_to_github: false,
       }),
     });
 
@@ -147,6 +150,7 @@ describe("POST /api/ingest — successful ingestion", () => {
         file_key: "wiki/chunks-test.md",
         content: SAMPLE_MARKDOWN,
         file_type: "wiki_page",
+        push_to_github: false,
       }),
     });
 
@@ -168,6 +172,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
       file_key: "wiki/reingest-test.md",
       content: "## Original\nFirst content",
       file_type: "wiki_page",
+      push_to_github: false,
     };
 
     // First ingest
