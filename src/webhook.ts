@@ -1,11 +1,7 @@
 import { createIngestPayload } from "./setup";
-import {
-  deleteFileCore,
-  ingestCore,
-  jsonResponse,
-  type Env,
-  type IngestResult,
-} from "./handlers";
+import { deleteFileCore, ingestCore } from "./ingest";
+import { jsonResponse } from "./http";
+import type { Env, IngestResult } from "./types";
 
 const GITHUB_OWNER = "50R1Paps";
 const GITHUB_REPO = "Mysecondbrain";

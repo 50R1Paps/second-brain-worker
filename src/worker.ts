@@ -2,7 +2,7 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { GitHubHandler } from "./github-handler";
 import { SecondBrainMCP } from "./mcp";
 import { handleScheduled } from "./cron";
-import type { Env } from "./handlers";
+import type { Env } from "./types";
 
 export { SecondBrainMCP };
 

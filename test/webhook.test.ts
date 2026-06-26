@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env, SELF } from "cloudflare:test";
 import { handleGitHubWebhook } from "../src/webhook";
-import type { Env } from "../src/handlers";
+import type { Env } from "../src/types";
 import { ensureSchema } from "./setup";
 
 const WEBHOOK_SECRET = "test-webhook-secret";

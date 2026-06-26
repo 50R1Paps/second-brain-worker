@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleScheduled } from "../src/cron";
-import type { Env } from "../src/handlers";
+import type { Env } from "../src/types";
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -34,13 +34,10 @@ function makeFetchMock(opts: {
     }
 
     if (urlStr.includes("/issues") && init?.method === "POST") {
-      return new Response(
-        JSON.stringify({ number: 1, title: "test" }),
-        {
-          status: opts.createdIssue === false ? 422 : 201,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return new Response(JSON.stringify({ number: 1, title: "test" }), {
+        status: opts.createdIssue === false ? 422 : 201,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     return new Response("Not found", { status: 404 });
@@ -78,17 +75,16 @@ describe("handleScheduled — token expiry reminder", () => {
   });
 
   it("creates issue when expiry is within 2 days", async () => {
-    const inOneDay = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000)
-      .toISOString();
+    const inOneDay = new Date(
+      Date.now() + 1 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const fetchMock = makeFetchMock({ issues: [] });
     const env = makeEnv({ GITHUB_TOKEN_EXPIRY: inOneDay });
 
     await handleScheduled(env, fetchMock);
 
     const calls = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls;
-    const postCall = calls.find(
-      (c) => c[1]?.method === "POST",
-    );
+    const postCall = calls.find((c) => c[1]?.method === "POST");
     expect(postCall).toBeDefined();
     const body = JSON.parse(postCall![1]!.body as string);
     expect(body.title).toContain("GITHUB_TOKEN in scadenza");
@@ -96,25 +92,25 @@ describe("handleScheduled — token expiry reminder", () => {
   });
 
   it("creates issue when token has already expired", async () => {
-    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
-      .toISOString();
+    const fiveDaysAgo = new Date(
+      Date.now() - 5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const fetchMock = makeFetchMock({ issues: [] });
     const env = makeEnv({ GITHUB_TOKEN_EXPIRY: fiveDaysAgo });
 
     await handleScheduled(env, fetchMock);
 
     const calls = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls;
-    const postCall = calls.find(
-      (c) => c[1]?.method === "POST",
-    );
+    const postCall = calls.find((c) => c[1]?.method === "POST");
     expect(postCall).toBeDefined();
     const body = JSON.parse(postCall![1]!.body as string);
     expect(body.body).toContain("scaduto");
   });
 
   it("does not create duplicate issue when one is already open", async () => {
-    const inOneDay = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000)
-      .toISOString();
+    const inOneDay = new Date(
+      Date.now() + 1 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const fetchMock = makeFetchMock({
       issues: [{ title: "[Token Expiry Reminder] GITHUB_TOKEN in scadenza" }],
     });
@@ -123,15 +119,14 @@ describe("handleScheduled — token expiry reminder", () => {
     await handleScheduled(env, fetchMock);
 
     const calls = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls;
-    const postCall = calls.find(
-      (c) => c[1]?.method === "POST",
-    );
+    const postCall = calls.find((c) => c[1]?.method === "POST");
     expect(postCall).toBeUndefined();
   });
 
   it("stops creating issues more than 30 days after expiry", async () => {
-    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
-      .toISOString();
+    const fortyDaysAgo = new Date(
+      Date.now() - 40 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const fetchMock = makeFetchMock({ issues: [] });
     const env = makeEnv({ GITHUB_TOKEN_EXPIRY: fortyDaysAgo });
 

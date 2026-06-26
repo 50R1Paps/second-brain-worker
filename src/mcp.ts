@@ -1,16 +1,11 @@
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Env } from "./handlers";
-import {
-  retrieveCore,
-  ingestCore,
-  validateIngestRequest,
-  readCore,
-  grepCore,
-  type IngestRequest,
-  type RetrieveRequest,
-} from "./handlers";
+import type { Env, IngestRequest, RetrieveRequest } from "./types";
+import { retrieveCore } from "./retrieve";
+import { ingestCore, validateIngestRequest } from "./ingest";
+import { readCore } from "./read";
+import { grepCore } from "./grep";
 import type { Props } from "./oauth-utils";
 
 const ALLOWED_USERNAMES = new Set<string>([]);

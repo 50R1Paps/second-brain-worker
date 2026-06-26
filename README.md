@@ -10,7 +10,7 @@ Second Brain Worker è un Cloudflare Worker che:
 - **Chunka** il contenuto rispettando la struttura delle sezioni (`##`/`###`), preservando frontmatter e wikilink
 - **Genera embedding** semantici via Workers AI (`@cf/baai/bge-base-en-v1.5`, 768 dim)
 - **Memorizza** tutto in R2 (raw), D1 (metadata + FTS5 keyword search), e Vectorize (embedding)
-- **Espone 3 tool MCP** — `retrieve`, `ingest`, `reindex` — accessibili dal tuo IDE via OAuth GitHub
+- **Espone 5 tool MCP** — `retrieve`, `ingest`, `reindex`, `read`, `grep` — accessibili dal tuo IDE via OAuth GitHub
 - **Sincronizza** automaticamente la wiki via GitHub webhook: quando fichi push su `main`, i file `.md` cambiati vengono re-indicizzati
 
 Tutto entro il **free tier** di Cloudflare.
@@ -56,7 +56,7 @@ Tutto entro il **free tier** di Cloudflare.
 
 ## MCP Tools
 
-Il server MCP espone 3 tool accessibili dal tuo IDE:
+Il server MCP espone 5 tool accessibili dal tuo IDE:
 
 ### `retrieve`
 
@@ -90,6 +90,27 @@ Re-indicizza un file specifico o tutti i file. Legge il raw da R2, re-esegue chu
 
 - `file_key` (string, optional) — file da re-indicizzare. Se omesso, re-indicizza tutti i file
 
+### `read`
+
+Legge il testo raw di un file indicizzato da R2 con offset/limite opzionali. Utile per leggere il contesto completo attorno a un chunk trovato via retrieve.
+
+**Parametri:**
+
+- `file_key` (string, required) — file key del file da leggere
+- `offset` (number, optional, default 0) — offset in caratteri da cui iniziare
+- `max_chars` (number, optional, default 2000, max 10000) — numero massimo di caratteri da restituire
+
+### `grep`
+
+Cerca un pattern regex nel testo raw di un file indicizzato. Restituisce i match con contesto opzionale. Utile per estrarre dati strutturati (date, importi, ID) dai documenti.
+
+**Parametri:**
+
+- `file_key` (string, required) — file key del file in cui cercare
+- `pattern` (string, required) — pattern regex JavaScript
+- `max_matches` (number, optional, default 10, max 50) — numero massimo di match
+- `context` (number, optional, default 40, max 200) — caratteri di contesto attorno a ogni match
+
 ---
 
 ## REST API
@@ -102,7 +123,7 @@ Oltre ai tool MCP, il Worker espone endpoint REST (non autenticati, utili per sc
 | POST   | `/api/ingest`     | Ingest di un file (stesso formato del tool MCP)                   |
 | POST   | `/api/retrieve`   | Retrieve ibrido (stesso formato del tool MCP)                     |
 | POST   | `/api/reindex`    | Reindex di un file o di tutti                                     |
-| GET    | `/api/read`       | Leggi raw text da R2 con offset/limit                             |
+| POST   | `/api/read`       | Leggi raw text da R2 con offset/limit                             |
 | POST   | `/api/grep`       | Ricerca regex sul contenuto indicizzato                           |
 | GET    | `/api/metrics`    | Metriche aggregate di retrieve (latency, score, zero-result rate) |
 | POST   | `/webhook/github` | Webhook GitHub per sync automatico                                |
@@ -299,7 +320,7 @@ Crea o modifica il file `mcp_config.json` nel tuo IDE (in Windsurf: Settings > M
 
 Sostituisci `<tuo-subdomain>` con il tuo subdomain reale.
 
-Al primo utilizzo, il IDE aprira il browser per l'autenticazione GitHub. Dopo il login, i 3 tool (`retrieve`, `ingest`, `reindex`) saranno disponibili nell'AI assistant.
+Al primo utilizzo, il IDE aprira il browser per l'autenticazione GitHub. Dopo il login, i 5 tool (`retrieve`, `ingest`, `reindex`, `read`, `grep`) saranno disponibili nell'AI assistant.
 
 ### Claude Desktop
 
@@ -343,8 +364,16 @@ Aggiungi al file `claude_desktop_config.json`:
 ```
 src/
 ├── worker.ts          # Entry point: OAuthProvider + routing
-├── mcp.ts             # SecondBrainMCP (McpAgent) con i 3 tool
-├── handlers.ts        # Logica core: ingest, retrieve, reindex, health
+├── mcp.ts             # SecondBrainMCP (McpAgent) con i 5 tool
+├── types.ts           # Tipi condivisi: Env, request/response interfaces
+├── http.ts            # Utility HTTP: jsonResponse, handleCORS
+├── health.ts          # Health check endpoint
+├── ingest.ts          # Ingestion: chunking, embedding, R2+D1+Vectorize, GitHub push
+├── retrieve.ts        # Retrieve ibrido: semantic + keyword search, merge, metrics
+├── metrics.ts         # Metriche aggregate di retrieve (latency, score, zero-result)
+├── reindex.ts         # Reindex singolo file o tutti i file
+├── read.ts            # Read raw text da R2 con offset/limit
+├── grep.ts            # Grep regex sul contenuto indicizzato
 ├── chunker.ts         # Markdown chunker (split su ##/###, overlap, wikilink-safe)
 ├── github-handler.ts  # Hono app: REST API + OAuth flow (/authorize, /callback)
 ├── oauth-utils.ts     # Utility OAuth: state, CSRF, cookie, approval dialog

@@ -312,7 +312,7 @@ describe("POST /api/ingest — push_to_github", () => {
 
 describe("ensureFrontmatter", () => {
   it("adds frontmatter when missing entirely", async () => {
-    const { ensureFrontmatter } = await import("../src/handlers");
+    const { ensureFrontmatter } = await import("../src/ingest");
     const result = ensureFrontmatter("## Hello\nWorld", "wiki/test.md");
     expect(result).toMatch(/^---\n/);
     expect(result).toContain('title: "test"');
@@ -323,7 +323,7 @@ describe("ensureFrontmatter", () => {
   });
 
   it("patches missing fields in existing frontmatter", async () => {
-    const { ensureFrontmatter } = await import("../src/handlers");
+    const { ensureFrontmatter } = await import("../src/ingest");
     const content = "---\ntitle: Existing\n---\n## Body\nText";
     const result = ensureFrontmatter(content, "wiki/existing.md");
     expect(result).toContain("title: Existing");
@@ -334,7 +334,7 @@ describe("ensureFrontmatter", () => {
   });
 
   it("returns content unchanged when all fields present", async () => {
-    const { ensureFrontmatter } = await import("../src/handlers");
+    const { ensureFrontmatter } = await import("../src/ingest");
     const content =
       "---\ntitle: Complete\ntype: concept\ncreated: 2026-01-01\nupdated: 2026-01-02\n---\n## Body";
     const result = ensureFrontmatter(content, "wiki/complete.md");
@@ -342,7 +342,7 @@ describe("ensureFrontmatter", () => {
   });
 
   it("derives title from filename when missing", async () => {
-    const { ensureFrontmatter } = await import("../src/handlers");
+    const { ensureFrontmatter } = await import("../src/ingest");
     const result = ensureFrontmatter("## Body", "wiki/concepts/My Page.md");
     expect(result).toContain('title: "My Page"');
   });

@@ -1,4 +1,4 @@
-import type { Env } from "./handlers";
+import type { Env } from "./types";
 
 const ALERT_REPO_OWNER = "50R1Paps";
 const ALERT_REPO_NAME = "second-brain-worker";

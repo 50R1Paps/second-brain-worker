@@ -23,14 +23,17 @@ IDE (Windsurf) ─MCP stdio─▶ workers-mcp proxy ─HTTPS─▶ Cloudflare Wo
 
 Entry point unico. Routing:
 
-| Route | Metodo | Descrizione |
-|-------|--------|-------------|
-| `/mcp` | POST | Endpoint MCP (via workers-mcp) |
-| `/api/ingest` | POST | Ingestion di un singolo file (chiamato dal setup script) |
-| `/api/retrieve` | POST | Retrieve ibrido (semantico + keyword) |
-| `/api/reindex` | POST | Reindex di un file o di tutti |
-| `/api/health` | GET | Health check |
-| `/webhook/github` | POST | GitHub webhook per sync automatico (fase 2) |
+| Route             | Metodo | Descrizione                                              |
+| ----------------- | ------ | -------------------------------------------------------- |
+| `/mcp`            | POST   | Endpoint MCP (via workers-mcp)                           |
+| `/api/ingest`     | POST   | Ingestion di un singolo file (chiamato dal setup script) |
+| `/api/retrieve`   | POST   | Retrieve ibrido (semantico + keyword)                    |
+| `/api/reindex`    | POST   | Reindex di un file o di tutti                            |
+| `/api/read`       | POST   | Read raw text da R2 con offset/limit                     |
+| `/api/grep`       | POST   | Grep regex sul contenuto indicizzato                     |
+| `/api/metrics`    | GET    | Metriche aggregate di retrieve                           |
+| `/api/health`     | GET    | Health check                                             |
+| `/webhook/github` | POST   | GitHub webhook per sync automatico                       |
 
 **Vincoli:** 50 subrequests/request (free plan). L'ingestion di un file richiede: 1 R2 put + 1 D1 insert + N Vectorize upsert (dove N = numero chunk). Per file > 50 chunk, il setup script chunka in lotti.
 
@@ -39,6 +42,7 @@ Entry point unico. Routing:
 **Bucket:** `second-brain-raw`
 
 Struttura chiavi:
+
 - Wiki page: `wiki/{path_relativo}` (es. `wiki/concepts/Tool Attention.md`)
 - File ingeriti: `files/{file_key}` (es. `files/paper-xyz:uuid`)
 
@@ -105,6 +109,7 @@ END;
 ### 5. Chonkie (WASM) — Chunking
 
 Chunking rispettoso della struttura markdown:
+
 - Split su sezioni `##` e `###`
 - Frontmatter YAML preservato in ogni chunk (per contesto)
 - Wikilink `[[Nome]]` non spezzati
@@ -113,16 +118,20 @@ Chunking rispettoso della struttura markdown:
 ### 6. workers-mcp — MCP Remoto
 
 Proxy MCP che espone il Worker come server MCP remoto:
+
 - **Transport:** HTTPS (Streamable HTTP)
 - **Auth:** OAuth Cloudflare con login GitHub
 - **Tool MCP esposti:**
   - `retrieve` — ricerca ibrida nel knowledge base
-  - `ingest` — caricamento di un file (fase 2)
+  - `ingest` — caricamento di un file
   - `reindex` — re-indicizzazione
+  - `read` — lettura raw text da R2
+  - `grep` — ricerca regex sul contenuto indicizzato
 
 ### 7. Setup Script (`scripts/setup.ts`)
 
 Script locale (eseguito con `wrangler` o `tsx`) che:
+
 1. Legge tutti i file `.md` in `wiki/`
 2. Per ogni file, chiama `POST /api/ingest` con il contenuto
 3. Gestisce il limite di 50 subrequests processando un file alla volta

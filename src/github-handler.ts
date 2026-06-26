@@ -17,17 +17,15 @@ import {
   validateCSRFToken,
   validateOAuthState,
 } from "./oauth-utils";
-import {
-  doHealth,
-  doIngest,
-  doRetrieve,
-  doReindex,
-  doRead,
-  doGrep,
-  doMetrics,
-  handleCORS,
-  type Env,
-} from "./handlers";
+import { doHealth } from "./health";
+import { doIngest } from "./ingest";
+import { doRetrieve } from "./retrieve";
+import { doReindex } from "./reindex";
+import { doRead } from "./read";
+import { doGrep } from "./grep";
+import { doMetrics } from "./metrics";
+import { handleCORS } from "./http";
+import type { Env } from "./types";
 import { handleGitHubWebhook } from "./webhook";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
