@@ -293,7 +293,7 @@ async function pushToGitHub(
   }
 
   const body = {
-    message: `chore: ingest ${fileKey} via Second Brain Worker`,
+    message: `chore: ingest ${fileKey} via Second Brain Worker [skip ci]`,
     content: btoa(safeContent),
     branch: "master",
     ...(sha ? { sha } : {}),
