@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS files (
@@ -61,4 +61,13 @@ END`,
 export async function ensureSchema() {
   const db = (env as unknown as { DB: D1Database }).DB;
   await db.batch(STATEMENTS.map((stmt) => db.prepare(stmt)));
+}
+
+export const TEST_API_TOKEN = "test-api-token";
+
+/** SELF.fetch with the REST API bearer token. */
+export function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${TEST_API_TOKEN}`);
+  return SELF.fetch(url, { ...init, headers });
 }

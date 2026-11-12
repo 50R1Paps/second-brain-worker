@@ -40,6 +40,9 @@ new_sqlite_classes = ["SecondBrainMCP"]
 # GITHUB_CLIENT_SECRET
 # COOKIE_ENCRYPTION_KEY
 
+# REST API bearer token (all /api/* except GET /api/health):
+# API_TOKEN
+
 # GitHub webhook sync secrets (set via `wrangler secret put`):
 # WEBHOOK_SECRET
 # GITHUB_TOKEN

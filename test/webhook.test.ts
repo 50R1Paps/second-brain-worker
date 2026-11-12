@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { env, SELF } from "cloudflare:test";
 import { handleGitHubWebhook } from "../src/webhook";
 import type { Env } from "../src/types";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 
 const WEBHOOK_SECRET = "test-webhook-secret";
 
@@ -139,7 +139,7 @@ describe("POST /webhook/github - push handling", () => {
 
   it("deletes removed markdown files from storage and indexes", async () => {
     await ensureSchema();
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

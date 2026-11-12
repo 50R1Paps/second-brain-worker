@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { SELF } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 
 describe("GET /api/health", () => {
   it("returns ok status with file and chunk counts", async () => {
@@ -24,12 +24,35 @@ describe("GET /api/health", () => {
 
 describe("404 handling", () => {
   it("returns 404 for unknown routes", async () => {
-    const response = await SELF.fetch("http://localhost/api/unknown");
+    const response = await apiFetch("http://localhost/api/unknown");
     expect(response.status).toBe(404);
 
     const data = await response.json<{
       error: { code: string; message: string };
     }>();
     expect(data.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("REST API token", () => {
+  it("rejects requests without a bearer token", async () => {
+    const response = await SELF.fetch("http://localhost/api/retrieve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "test" }),
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects a wrong bearer token", async () => {
+    const response = await SELF.fetch("http://localhost/api/read", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer wrong-token",
+      },
+      body: JSON.stringify({ file_key: "wiki/test.md" }),
+    });
+    expect(response.status).toBe(401);
   });
 });

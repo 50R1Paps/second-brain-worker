@@ -11,6 +11,8 @@ export interface Env {
   WEBHOOK_SECRET: string;
   GITHUB_TOKEN: string;
   GITHUB_TOKEN_EXPIRY: string;
+  /** Bearer token for the REST API (/api/*, except /api/health). */
+  API_TOKEN?: string;
   SECOND_BRAIN_MCP: DurableObjectNamespace;
 }
 

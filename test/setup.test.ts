@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { SELF } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 import {
   createIngestPayload,
   ingestWithRetry,
@@ -247,7 +246,7 @@ describe("Setup integration — ingest via worker", () => {
     );
 
     const fetchFn: IngestFetch = async (url, options) => {
-      const response = await SELF.fetch(url, {
+      const response = await apiFetch(url, {
         method: options.method as "POST",
         headers: options.headers,
         body: options.body,
@@ -269,7 +268,7 @@ describe("Setup integration — ingest via worker", () => {
     expect(result.success).toBe(true);
     expect(result.chunk_count).toBeGreaterThan(0);
 
-    const healthResponse = await SELF.fetch("http://localhost/api/health");
+    const healthResponse = await apiFetch("http://localhost/api/health");
     expect(healthResponse.status).toBe(200);
     const health = await healthResponse.json<{
       status: string;

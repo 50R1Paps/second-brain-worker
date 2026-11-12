@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { SELF } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 
 const SAMPLE_MARKDOWN = `---
 title: MCP Test Page
@@ -19,7 +19,7 @@ async function ingestFile(
   file_type: "wiki_page" | "ingested" = "wiki_page",
   title?: string,
 ) {
-  await SELF.fetch("http://localhost/api/ingest", {
+  await apiFetch("http://localhost/api/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -35,7 +35,7 @@ async function ingestFile(
 describe("MCP — REST API still works through OAuthProvider", () => {
   it("GET /api/health returns ok", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/health");
+    const response = await apiFetch("http://localhost/api/health");
     expect(response.status).toBe(200);
     const data = await response.json<{
       status: string;
@@ -47,7 +47,7 @@ describe("MCP — REST API still works through OAuthProvider", () => {
 
   it("POST /api/ingest works through new routing", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -78,7 +78,7 @@ describe("MCP — REST API still works through OAuthProvider", () => {
       "MCP Retrieve Test",
     );
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "markdown chunking" }),
@@ -101,7 +101,7 @@ describe("MCP — reindex endpoint", () => {
     await ensureSchema();
     await ingestFile("wiki/mcp-reindex.md", "## Original\nFirst content");
 
-    const response = await SELF.fetch("http://localhost/api/reindex", {
+    const response = await apiFetch("http://localhost/api/reindex", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_key: "wiki/mcp-reindex.md" }),
@@ -120,7 +120,7 @@ describe("MCP — reindex endpoint", () => {
 
   it("POST /api/reindex returns 404 for unknown file", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/reindex", {
+    const response = await apiFetch("http://localhost/api/reindex", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_key: "wiki/nonexistent.md" }),
@@ -136,7 +136,7 @@ describe("MCP — reindex endpoint", () => {
     await ingestFile("wiki/mcp-reindex-all-1.md", "## File 1\nContent 1");
     await ingestFile("wiki/mcp-reindex-all-2.md", "## File 2\nContent 2");
 
-    const response = await SELF.fetch("http://localhost/api/reindex", {
+    const response = await apiFetch("http://localhost/api/reindex", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -170,7 +170,7 @@ describe("MCP — read endpoint", () => {
       "## Section A\nThis is the first section.\n\n## Section B\nThis is the second section with [[Wikilink]].";
     await ingestFile("wiki/mcp-read-test.md", content);
 
-    const response = await SELF.fetch("http://localhost/api/read", {
+    const response = await apiFetch("http://localhost/api/read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_key: "wiki/mcp-read-test.md" }),
@@ -196,7 +196,7 @@ describe("MCP — read endpoint", () => {
     const content = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     await ingestFile("wiki/mcp-read-offset.md", content);
 
-    const response = await SELF.fetch("http://localhost/api/read", {
+    const response = await apiFetch("http://localhost/api/read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -220,7 +220,7 @@ describe("MCP — read endpoint", () => {
 
   it("POST /api/read returns 404 for unknown file", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/read", {
+    const response = await apiFetch("http://localhost/api/read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_key: "wiki/nonexistent.md" }),
@@ -239,7 +239,7 @@ describe("MCP — grep endpoint", () => {
       "The total is $42.50 and the date is 2024-01-15. Another total is $100.00.";
     await ingestFile("wiki/mcp-grep-test.md", content);
 
-    const response = await SELF.fetch("http://localhost/api/grep", {
+    const response = await apiFetch("http://localhost/api/grep", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -272,7 +272,7 @@ describe("MCP — grep endpoint", () => {
     const content = "aaa bbb aaa bbb aaa bbb aaa bbb";
     await ingestFile("wiki/mcp-grep-limit.md", content);
 
-    const response = await SELF.fetch("http://localhost/api/grep", {
+    const response = await apiFetch("http://localhost/api/grep", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -291,7 +291,7 @@ describe("MCP — grep endpoint", () => {
     await ensureSchema();
     await ingestFile("wiki/mcp-grep-nomatch.md", "Hello world");
 
-    const response = await SELF.fetch("http://localhost/api/grep", {
+    const response = await apiFetch("http://localhost/api/grep", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -310,7 +310,7 @@ describe("MCP — grep endpoint", () => {
     await ensureSchema();
     await ingestFile("wiki/mcp-grep-invalid.md", "Hello world");
 
-    const response = await SELF.fetch("http://localhost/api/grep", {
+    const response = await apiFetch("http://localhost/api/grep", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -326,7 +326,7 @@ describe("MCP — grep endpoint", () => {
 
   it("POST /api/grep returns 404 for unknown file", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/grep", {
+    const response = await apiFetch("http://localhost/api/grep", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

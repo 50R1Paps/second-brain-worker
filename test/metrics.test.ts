@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { SELF } from "cloudflare:test";
 import { env } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 
 const SAMPLE_MARKDOWN = `---
 title: Metrics Test Page
@@ -17,7 +16,7 @@ Metrics include latency, score distribution, and search type breakdown.`;
 async function ingestAndRetrieve() {
   await ensureSchema();
 
-  await SELF.fetch("http://localhost/api/ingest", {
+  await apiFetch("http://localhost/api/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -29,7 +28,7 @@ async function ingestAndRetrieve() {
     }),
   });
 
-  const response = await SELF.fetch("http://localhost/api/retrieve", {
+  const response = await apiFetch("http://localhost/api/retrieve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query: "retrieval metrics evaluation" }),
@@ -115,7 +114,7 @@ describe("Retrieve metrics — inline response", () => {
   it("zero_results is true when no results found", async () => {
     await ensureSchema();
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "zzznonexistentxyz123" }),
@@ -155,7 +154,7 @@ describe("GET /api/metrics — aggregated summary", () => {
   it("returns metrics summary for default 24h period", async () => {
     await ingestAndRetrieve();
 
-    const response = await SELF.fetch("http://localhost/api/metrics");
+    const response = await apiFetch("http://localhost/api/metrics");
     expect(response.status).toBe(200);
 
     const data = await response.json<{
@@ -188,7 +187,7 @@ describe("GET /api/metrics — aggregated summary", () => {
   it("supports period query parameter", async () => {
     await ingestAndRetrieve();
 
-    const response = await SELF.fetch("http://localhost/api/metrics?period=7d");
+    const response = await apiFetch("http://localhost/api/metrics?period=7d");
     expect(response.status).toBe(200);
 
     const data = await response.json<{ period: string; total_queries: number }>();
@@ -196,7 +195,7 @@ describe("GET /api/metrics — aggregated summary", () => {
   });
 
   it("rejects invalid period", async () => {
-    const response = await SELF.fetch("http://localhost/api/metrics?period=invalid");
+    const response = await apiFetch("http://localhost/api/metrics?period=invalid");
     expect(response.status).toBe(400);
 
     const data = await response.json<{ error: { code: string } }>();
@@ -206,7 +205,7 @@ describe("GET /api/metrics — aggregated summary", () => {
   it("returns empty summary when no queries in period", async () => {
     await ensureSchema();
 
-    const response = await SELF.fetch("http://localhost/api/metrics?period=1h");
+    const response = await apiFetch("http://localhost/api/metrics?period=1h");
     expect(response.status).toBe(200);
 
     const data = await response.json<{

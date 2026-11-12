@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { SELF } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
+import { vectorIdFor } from "../src/ingest";
 
 const SAMPLE_MARKDOWN = `---
 title: Test Page
@@ -16,7 +16,7 @@ It should not split [[Wikilinks]] across chunk boundaries.`;
 describe("POST /api/ingest — validation", () => {
   it("rejects missing file_key", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "test", file_type: "wiki_page" }),
@@ -28,7 +28,7 @@ describe("POST /api/ingest — validation", () => {
 
   it("rejects missing content", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -43,7 +43,7 @@ describe("POST /api/ingest — validation", () => {
 
   it("rejects invalid file_type", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -59,7 +59,7 @@ describe("POST /api/ingest — validation", () => {
 
   it("rejects empty body", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -71,7 +71,7 @@ describe("POST /api/ingest — validation", () => {
 describe("POST /api/ingest — successful ingestion", () => {
   it("ingests a markdown file and returns chunk count", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -96,7 +96,7 @@ describe("POST /api/ingest — successful ingestion", () => {
 
   it("stores raw content in R2", async () => {
     await ensureSchema();
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -117,7 +117,7 @@ describe("POST /api/ingest — successful ingestion", () => {
 
   it("persists file metadata in D1", async () => {
     await ensureSchema();
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -143,7 +143,7 @@ describe("POST /api/ingest — successful ingestion", () => {
 
   it("persists chunks in D1", async () => {
     await ensureSchema();
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -176,7 +176,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
     };
 
     // First ingest
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -190,7 +190,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
       .first<{ count: number }>();
 
     // Re-ingest with different content
-    await SELF.fetch("http://localhost/api/ingest", {
+    await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -217,7 +217,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
 
 describe("POST /api/ingest — error handling", () => {
   it("returns 404 for wrong method on /api/ingest", async () => {
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "GET",
     });
     expect(response.status).toBe(404);
@@ -227,7 +227,7 @@ describe("POST /api/ingest — error handling", () => {
 describe("POST /api/ingest — push_to_github", () => {
   it("accepts push_to_github and returns github_pushed field", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -255,7 +255,7 @@ describe("POST /api/ingest — push_to_github", () => {
 
   it("defaults to pushing wiki_page to GitHub when push_to_github not specified", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -273,7 +273,7 @@ describe("POST /api/ingest — push_to_github", () => {
 
   it("does not push to GitHub when push_to_github is explicitly false", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -292,7 +292,7 @@ describe("POST /api/ingest — push_to_github", () => {
 
   it("does not push to GitHub for ingested file type even with push_to_github", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/ingest", {
+    const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -345,5 +345,16 @@ describe("ensureFrontmatter", () => {
     const { ensureFrontmatter } = await import("../src/ingest");
     const result = ensureFrontmatter("## Body", "wiki/concepts/My Page.md");
     expect(result).toContain('title: "My Page"');
+  });
+});
+
+describe("vectorIdFor", () => {
+  it("stays within the Vectorize 64-byte id limit for long file keys", async () => {
+    const longKey =
+      "wiki/meetings/Riunione 2026-10-14 — Colloquio per ruolo di intelligenza artificiale applicata.md";
+    const id = await vectorIdFor(longKey, 12);
+    expect(new TextEncoder().encode(id).byteLength).toBeLessThanOrEqual(64);
+    expect(id).toBe(await vectorIdFor(longKey, 12));
+    expect(id).not.toBe(await vectorIdFor(longKey, 13));
   });
 });
