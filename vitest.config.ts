@@ -5,6 +5,8 @@ export default defineWorkersProject({
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.test.toml" },
+        // Local .dev.vars must not override the isolated test credential.
+        miniflare: { bindings: { API_TOKEN: "test-api-token" } },
       },
     },
   },
