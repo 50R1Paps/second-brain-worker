@@ -13,6 +13,21 @@ const GITHUB_REPO = "Mysecondbrain";
 
 type FetchFunction = typeof fetch;
 
+/**
+ * Vectorize ids are capped at 64 bytes; file keys with long titles exceed it.
+ * SHA-256 hex is exactly 64 bytes. Lookups go through chunk metadata and the
+ * vector_id stored in D1, never by parsing the id.
+ */
+export async function vectorIdFor(fileKey: string, chunkIndex: number): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${fileKey}:${chunkIndex}`),
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function ensureFrontmatter(content: string, fileKey: string): string {
   const fmMatch = content.match(/^---\n(.*?)\n---/s);
   const now = new Date().toISOString().slice(0, 10);
@@ -195,8 +210,11 @@ export async function ingestCore(
     // 5. Upsert vectors into Vectorize (if available)
     let vectorIds: string[] = [];
     if (embeddings && env.VECTORIZE) {
+      const ids = await Promise.all(
+        chunks.map((chunk) => vectorIdFor(file_key, chunk.chunk_index)),
+      );
       const vectors = chunks.map((chunk, i) => ({
-        id: `${file_key}:${chunk.chunk_index}`,
+        id: ids[i],
         values: embeddings[i],
         metadata: {
           file_key,

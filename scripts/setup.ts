@@ -67,6 +67,9 @@ Options:
       --max-retries <n>    Max retries per file (default: 3)
       --dry-run            Scan and list files without ingesting
   -h, --help               Show this help
+
+Environment:
+  SECOND_BRAIN_API_TOKEN   Bearer token for the Worker REST API (required unless --dry-run)
 `);
 }
 
@@ -127,9 +130,18 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  const apiToken = process.env.SECOND_BRAIN_API_TOKEN;
+  if (!apiToken) {
+    console.error("SECOND_BRAIN_API_TOKEN is not set.");
+    process.exit(1);
+  }
+
   const ingestUrl = `${args.workerUrl}/api/ingest`;
   const fetchFn: IngestFetch = async (url, options) => {
-    const response = await fetch(url, options as RequestInit);
+    const response = await fetch(url, {
+      ...options,
+      headers: { ...options.headers, Authorization: `Bearer ${apiToken}` },
+    });
     return {
       ok: response.ok,
       status: response.status,

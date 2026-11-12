@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SELF } from "cloudflare:test";
-import { ensureSchema } from "./setup";
+import { ensureSchema, apiFetch } from "./setup";
 
 const MARKDOWN_ARCHITECTURE = `---
 title: Architecture Page
@@ -29,7 +28,7 @@ async function ingestFile(
   file_type: "wiki_page" | "ingested" = "wiki_page",
   title?: string,
 ) {
-  await SELF.fetch("http://localhost/api/ingest", {
+  await apiFetch("http://localhost/api/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -62,7 +61,7 @@ interface RetrieveResponse {
 describe("POST /api/retrieve — validation", () => {
   it("rejects missing query", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -74,7 +73,7 @@ describe("POST /api/retrieve — validation", () => {
 
   it("rejects empty query", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "" }),
@@ -84,7 +83,7 @@ describe("POST /api/retrieve — validation", () => {
 
   it("rejects invalid JSON body", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "not json",
@@ -103,7 +102,7 @@ describe("POST /api/retrieve — keyword search", () => {
       "Architecture Page",
     );
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "serverless architecture" }),
@@ -130,7 +129,7 @@ describe("POST /api/retrieve — keyword search", () => {
     await ingestFile("wiki/retrieve-limit-1.md", MARKDOWN_ARCHITECTURE);
     await ingestFile("wiki/retrieve-limit-2.md", MARKDOWN_ARCHITECTURE);
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "architecture", limit: 1 }),
@@ -146,7 +145,7 @@ describe("POST /api/retrieve — keyword search", () => {
     await ingestFile("wiki/retrieve-sort-1.md", MARKDOWN_ARCHITECTURE);
     await ingestFile("wiki/retrieve-sort-2.md", MARKDOWN_TESTING);
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "architecture" }),
@@ -170,7 +169,7 @@ describe("POST /api/retrieve — keyword search", () => {
       "Meta Test",
     );
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "serverless" }),
@@ -203,7 +202,7 @@ describe("POST /api/retrieve — filters", () => {
       "ingested",
     );
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -224,7 +223,7 @@ describe("POST /api/retrieve — filters", () => {
     await ensureSchema();
     await ingestFile("wiki/retrieve-section.md", MARKDOWN_ARCHITECTURE);
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -246,7 +245,7 @@ describe("POST /api/retrieve — filters", () => {
     await ingestFile("wiki/concepts/retrieve-prefix.md", MARKDOWN_ARCHITECTURE);
     await ingestFile("wiki/other/retrieve-other.md", MARKDOWN_ARCHITECTURE);
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -302,7 +301,7 @@ describe("POST /api/retrieve — content truncation", () => {
         ),
     ]);
 
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "truncate" }),
@@ -321,7 +320,7 @@ describe("POST /api/retrieve — content truncation", () => {
 describe("POST /api/retrieve — edge cases", () => {
   it("returns empty results for non-matching query", async () => {
     await ensureSchema();
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "zzzznonexistentzzzz" }),
@@ -334,7 +333,7 @@ describe("POST /api/retrieve — edge cases", () => {
   });
 
   it("returns 404 for wrong method on /api/retrieve", async () => {
-    const response = await SELF.fetch("http://localhost/api/retrieve", {
+    const response = await apiFetch("http://localhost/api/retrieve", {
       method: "GET",
     });
     expect(response.status).toBe(404);

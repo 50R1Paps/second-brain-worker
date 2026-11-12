@@ -24,17 +24,23 @@ import { doReindex } from "./reindex";
 import { doRead } from "./read";
 import { doGrep } from "./grep";
 import { doMetrics } from "./metrics";
-import { handleCORS } from "./http";
+import { handleCORS, requireApiToken } from "./http";
 import type { Env } from "./types";
 import { handleGitHubWebhook } from "./webhook";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
-// --- REST API routes (unauthenticated, for setup script) ---
+// --- REST API routes (Bearer API_TOKEN; /api/health stays public) ---
 
 app.options("/api/*", () => handleCORS());
 
 app.get("/api/health", (c) => doHealth(c.env));
+
+app.use("/api/*", async (c, next) => {
+  const denied = requireApiToken(c.req.raw, c.env);
+  if (denied) return denied;
+  await next();
+});
 
 app.post("/api/ingest", (c) => doIngest(c.req.raw, c.env));
 

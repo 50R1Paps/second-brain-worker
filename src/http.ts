@@ -18,3 +18,29 @@ export function handleCORS(): Response {
     },
   });
 }
+
+/**
+ * Guards the REST API: requires `Authorization: Bearer <API_TOKEN>`.
+ * Fails closed when API_TOKEN is not configured. Returns null when allowed.
+ */
+export function requireApiToken(
+  request: Request,
+  env: { API_TOKEN?: string },
+): Response | null {
+  const expected = env.API_TOKEN;
+  const header = request.headers.get("Authorization") ?? "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (expected && provided && safeEqual(provided, expected)) return null;
+  return jsonResponse(
+    { error: { code: "UNAUTHORIZED", message: "Missing or invalid API token" } },
+    401,
+  );
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const left = encoder.encode(a);
+  const right = encoder.encode(b);
+  if (left.byteLength !== right.byteLength) return false;
+  return crypto.subtle.timingSafeEqual(left, right);
+}

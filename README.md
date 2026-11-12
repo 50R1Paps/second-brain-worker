@@ -115,7 +115,7 @@ Cerca un pattern regex nel testo raw di un file indicizzato. Restituisce i match
 
 ## REST API
 
-Oltre ai tool MCP, il Worker espone endpoint REST (non autenticati, utili per script e setup):
+Oltre ai tool MCP, il Worker espone endpoint REST per script e setup. Tutti richiedono `Authorization: Bearer <API_TOKEN>`, tranne `GET /api/health` (pubblico, restituisce solo i conteggi). Senza `API_TOKEN` configurato le richieste vengono rifiutate con 401. Il webhook usa la propria firma (`WEBHOOK_SECRET`).
 
 | Metodo | Endpoint          | Descrizione                                                       |
 | ------ | ----------------- | ----------------------------------------------------------------- |
@@ -206,6 +206,9 @@ npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
 npx wrangler secret put COOKIE_ENCRYPTION_KEY
 
+# REST API (/api/*): token bearer, es. `openssl rand -hex 32`
+npx wrangler secret put API_TOKEN
+
 # GitHub webhook sync (opzionale, solo se usi il sync automatico)
 npx wrangler secret put WEBHOOK_SECRET
 npx wrangler secret put GITHUB_TOKEN
@@ -237,6 +240,9 @@ Annota l'URL del Worker (es. `https://second-brain.<tuo-subdomain>.workers.dev`)
 Se hai la wiki Obsidian in locale, puoi ingerire tutti i file `.md` con lo script di setup:
 
 ```bash
+# Il token REST va passato via env
+export SECOND_BRAIN_API_TOKEN=<API_TOKEN>
+
 # Locale (durante dev)
 npm run setup -- --wiki-dir /path/to/wiki --url http://localhost:8787
 
@@ -438,11 +444,13 @@ Se i vettori sono mancanti o vuoi rigenerare gli embeddings:
 # Reindex di un singolo file
 curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" \
   -d '{"file_key": "wiki/concepts/Esempio.md"}'
 
 # Reindex di tutti i file (attenzione: può hit rate limit su Workers AI)
 curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" \
   -d '{}'
 ```
 
@@ -461,16 +469,16 @@ Dopo aver fatto qualche retrieve, controlla le metriche aggregate:
 
 ```bash
 # Ultime 24 ore (default)
-curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics
+curl -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" https://second-brain.<tuo-subdomain>.workers.dev/api/metrics
 
 # Ultima ora
-curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=1h
+curl -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=1h
 
 # Ultimi 7 giorni
-curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=7d
+curl -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=7d
 
 # Ultimi 30 giorni
-curl https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=30d
+curl -H "Authorization: Bearer $SECOND_BRAIN_API_TOKEN" https://second-brain.<tuo-subdomain>.workers.dev/api/metrics?period=30d
 ```
 
 Periodi validi: `1h`, `24h`, `7d`, `30d`.
