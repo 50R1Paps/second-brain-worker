@@ -23,6 +23,30 @@ export class OAuthError extends Error {
     );
   }
 }
+/** Restrict OAuth redirects even for clients registered before this policy. */
+export function isSafeRedirectUri(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.hash || value.includes("#")) return false;
+    if (url.protocol === "https:") return true;
+    return url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
+      /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?]|$)/i.test(value);
+  } catch {
+    return false;
+  }
+}
+
+export function validateAuthPolicy(request: AuthRequest): void {
+  if (!request || request.responseType !== "code" || typeof request.clientId !== "string" ||
+      !request.clientId || !isSafeRedirectUri(request.redirectUri) ||
+      request.codeChallengeMethod !== "S256" ||
+      typeof request.codeChallenge !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(request.codeChallenge) ||
+      !Array.isArray(request.scope) || request.scope.some((scope) => scope !== "offline_access")) {
+    throw new OAuthError("invalid_request", "Invalid authorization request");
+  }
+}
 
 export interface OAuthStateResult {
   stateToken: string;
@@ -495,8 +519,5 @@ export async function fetchUpstreamAuthToken({
 }
 
 export type Props = {
-  login: string;
-  name: string;
-  email: string;
-  accessToken: string;
+  githubId: number;
 };

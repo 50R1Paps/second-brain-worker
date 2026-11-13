@@ -1,4 +1,5 @@
 import type { Env } from "./types";
+import { cleanupStorage } from "./file-coordinator";
 
 const ALERT_REPO_OWNER = "50R1Paps";
 const ALERT_REPO_NAME = "second-brain-worker";
@@ -6,6 +7,19 @@ const REMINDER_TITLE = "[Token Expiry Reminder] GITHUB_TOKEN in scadenza";
 const ALERT_DAYS_BEFORE = 2;
 
 type FetchFunction = typeof fetch;
+
+/** Aggregate metrics are retained for 30 days; raw searches are never retained. */
+export async function runMaintenance(env: Env): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM request_counters WHERE expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM webhook_receipts WHERE expires_at < ?").bind(now),
+    env.DB.prepare("UPDATE retrieve_metrics SET query = '' WHERE query <> ''"),
+    env.DB.prepare("DELETE FROM retrieve_metrics WHERE created_at < datetime('now', '-30 days')"),
+  ]);
+  await cleanupStorage(env);
+  console.info(JSON.stringify({ event: "maintenance_complete" }));
+}
 
 export async function handleScheduled(
   env: Env,
@@ -43,7 +57,7 @@ async function checkExistingReminder(
     },
   });
 
-  if (!response.ok) return false;
+  if (!response.ok) throw new Error(`Token reminder lookup failed (HTTP ${response.status})`);
 
   const issues = (await response.json()) as Array<{ title: string }>;
   return issues.some((issue) => issue.title === REMINDER_TITLE);
@@ -83,7 +97,7 @@ async function createReminderIssue(
         `4. Chiudi questa issue\n\n` +
         `> Issue generata automaticamente dal Cron Trigger di Second Brain Worker.`;
 
-  await fetchFn(url, {
+  const response = await fetchFn(url, {
     method: "POST",
     headers: {
       Accept: "application/vnd.github+json",
@@ -97,4 +111,5 @@ async function createReminderIssue(
       labels: ["token-expiry-reminder"],
     }),
   });
+  if (!response.ok) throw new Error(`Token reminder creation failed (HTTP ${response.status})`);
 }

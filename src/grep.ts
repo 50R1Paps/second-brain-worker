@@ -1,4 +1,6 @@
 import { jsonResponse } from "./http";
+import { RE2JS } from "re2js";
+import { MAX_FILE_BYTES, MAX_PATTERN_BYTES } from "./request-security";
 import type { Env, GrepMatch, GrepResult } from "./types";
 
 const DEFAULT_GREP_MAX_MATCHES = 10;
@@ -13,6 +15,8 @@ export async function grepCore(
   max_matches = DEFAULT_GREP_MAX_MATCHES,
   context = DEFAULT_GREP_CONTEXT,
 ): Promise<GrepResult | Response> {
+  if (!pattern || new TextEncoder().encode(pattern).byteLength > MAX_PATTERN_BYTES)
+    return jsonResponse({ error: { code: "INVALID_REGEX", message: "Pattern exceeds limit or is empty" } }, 400);
   const file = await env.DB.prepare(
     "SELECT file_key, r2_key FROM files WHERE file_key = ?",
   )
@@ -38,18 +42,20 @@ export async function grepCore(
       404,
     );
   }
+  if (r2Obj.size > MAX_FILE_BYTES)
+    return jsonResponse({ error: { code: "FILE_TOO_LARGE", message: "Raw file exceeds limit" } }, 400);
 
   const content = await r2Obj.text();
 
-  let regex: RegExp;
+  let regex: RE2JS;
   try {
-    regex = new RegExp(pattern, "g");
+    regex = RE2JS.compile(pattern);
   } catch {
     return jsonResponse(
       {
         error: {
           code: "INVALID_REGEX",
-          message: `Invalid regex pattern: ${pattern}`,
+          message: "Invalid or unsupported RE2 pattern",
         },
       },
       400,
@@ -60,15 +66,15 @@ export async function grepCore(
   const clampedContext = Math.min(context, MAX_GREP_CONTEXT);
 
   const matches: GrepMatch[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(content)) !== null && matches.length < clampedMax) {
-    const start = m.index;
-    const end = m.index + m[0].length;
+  const matcher = regex.matcher(content);
+  while (matches.length < clampedMax && matcher.find()) {
+    const start = matcher.start();
+    const end = matcher.end();
     const ctxStart = Math.max(0, start - clampedContext);
     const ctxEnd = Math.min(content.length, end + clampedContext);
 
     matches.push({
-      match: m[0],
+      match: content.slice(start, end),
       start,
       end,
       context: {
@@ -78,9 +84,6 @@ export async function grepCore(
       },
     });
 
-    if (m[0].length === 0) {
-      regex.lastIndex++;
-    }
   }
 
   return {

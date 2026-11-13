@@ -1,11 +1,12 @@
 name = "second-brain-test"
-main = "src/worker.ts"
-compatibility_date = "2024-09-01"
+main = "../src/worker.ts"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+preview_urls = false
 
 [vars]
 WEBHOOK_SECRET = "test-webhook-secret"
-GITHUB_TOKEN = "test-github-token"
+GITHUB_TOKEN = ""
 GITHUB_CLIENT_ID = "test-github-client-id"
 GITHUB_CLIENT_SECRET = "test-github-client-secret"
 COOKIE_ENCRYPTION_KEY = "test-cookie-encryption-key-32-bytes"
@@ -20,7 +21,7 @@ bucket_name = "second-brain-raw"
 binding = "DB"
 database_name = "second-brain-test"
 database_id = "test"
-migrations_dir = "migrations"
+migrations_dir = "../migrations"
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
@@ -28,9 +29,26 @@ id = "test-kv"
 
 [durable_objects]
 bindings = [
-  { name = "SECOND_BRAIN_MCP", class_name = "SecondBrainMCP" }
+  { name = "SECOND_BRAIN_MCP", class_name = "OwnerMCP" },
+  { name = "MUTATIONS", class_name = "FileCoordinator" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SecondBrainMCP"]
+
+[[migrations]]
+tag = "v2-security-cutover"
+new_sqlite_classes = ["FileCoordinator", "OwnerMCP"]
+deleted_classes = ["SecondBrainMCP"]
+
+# Tests exercise denial deterministically with isolated limiter fixtures.
+[[ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "15362793"
+simple = { limit = 10000, period = 60 }
+
+[[ratelimits]]
+name = "REQUEST_RATE_LIMITER"
+namespace_id = "15362794"
+simple = { limit = 10000, period = 60 }
