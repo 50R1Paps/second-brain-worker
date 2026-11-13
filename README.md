@@ -125,12 +125,24 @@ Oltre ai tool MCP, il Worker espone endpoint REST per script e setup. Tutti rich
 | ------ | ----------------- | ----------------------------------------------------------------- |
 | GET    | `/api/health`     | Stato del Worker: file indicizzati, chunk totali                  |
 | POST   | `/api/ingest`     | Ingest di un file (stesso formato del tool MCP)                   |
-| POST   | `/api/retrieve`   | Retrieve ibrido (stesso formato del tool MCP)                     |
+| POST   | `/api/retrieve`   | Retrieve ibrido, con filtri annidati in `filter`                  |
 | POST   | `/api/reindex`    | Reindex di un file o di tutti                                     |
 | POST   | `/api/read`       | Leggi raw text da R2 con offset/limit                             |
 | POST   | `/api/grep`       | Ricerca regex sul contenuto indicizzato                           |
 | GET    | `/api/metrics`    | Metriche aggregate di retrieve (latency, score, zero-result rate) |
 | POST   | `/webhook/github` | Webhook GitHub per sync automatico                                |
+
+Nella REST API i filtri di retrieve vanno dentro `filter`; i tool MCP li espongono invece come parametri diretti:
+
+```json
+{
+  "query": "architettura",
+  "filter": {
+    "file_type": "wiki_page",
+    "file_key_prefix": "wiki/concepts/"
+  }
+}
+```
 
 ---
 

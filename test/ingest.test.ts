@@ -240,7 +240,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
     expect(document.content).not.toContain("Replacement");
     const retrieved = await apiFetch("http://localhost/api/retrieve", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "classification", file_type: "wiki_page" }),
+      body: JSON.stringify({ query: "classification", filter: { file_type: "wiki_page" } }),
     });
     expect(retrieved.status).toBe(200);
     const result = await retrieved.json<{ results: Array<{ file_key: string }> }>();
