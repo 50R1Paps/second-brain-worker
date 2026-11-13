@@ -16,7 +16,7 @@ export interface Env {
   GITHUB_TOKEN_EXPIRY: string;
   /** Bearer token for the REST API (/api/*, except /api/health). */
   API_TOKEN?: string;
-  SECOND_BRAIN_MCP: DurableObjectNamespace;
+  OWNER_MCP: DurableObjectNamespace;
   MUTATIONS: DurableObjectNamespace<FileCoordinator>;
   AUTH_RATE_LIMITER: RateLimit;
   REQUEST_RATE_LIMITER: RateLimit;

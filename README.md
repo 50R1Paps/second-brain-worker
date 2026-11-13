@@ -49,7 +49,7 @@ Il consumo è soggetto alle quote e al piano Cloudflare: i limiti applicativi ri
 - **Vectorize** (`VECTORIZE`) — indice di embedding semantici (768 dimensioni)
 - **Workers AI** (`AI`) — modello `bge-base-en-v1.5` per generazione embedding
 - **KV** (`OAUTH_KV`) — storage di stato/CSRF token per il flow OAuth
-- **Durable Object** (`SECOND_BRAIN_MCP`) — McpAgent che mantiene la sessione MCP
+- **Durable Object** (`OWNER_MCP`, classe `OwnerMCP`) — mantiene le sole nuove sessioni MCP; il vecchio binding non viene riutilizzato
 - **Durable Object** (`MUTATIONS`, classe `FileCoordinator`) — serializza ingest, delete e reindex per file
 - **OAuth Provider** — integrazione `@cloudflare/workers-oauth-provider` con GitHub OAuth
 
