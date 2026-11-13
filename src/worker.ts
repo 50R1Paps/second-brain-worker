@@ -14,7 +14,7 @@ export { OwnerMCP };
 let _provider: OAuthProvider<Env> | null = null;
 
 const mcpHandler = OwnerMCP.serve("/mcp", {
-  binding: "SECOND_BRAIN_MCP",
+  binding: "OWNER_MCP",
 });
 
 function getProvider(): OAuthProvider<Env> {

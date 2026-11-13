@@ -14,7 +14,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_TOKEN: "test-github-token",
     GITHUB_TOKEN_EXPIRY: "2099-01-01T00:00:00Z",
-    SECOND_BRAIN_MCP: {} as DurableObjectNamespace,
+    OWNER_MCP: {} as DurableObjectNamespace,
     ...overrides,
   } as Env;
 }

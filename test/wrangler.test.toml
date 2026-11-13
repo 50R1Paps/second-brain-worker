@@ -29,7 +29,7 @@ id = "test-kv"
 
 [durable_objects]
 bindings = [
-  { name = "SECOND_BRAIN_MCP", class_name = "OwnerMCP" },
+  { name = "OWNER_MCP", class_name = "OwnerMCP" },
   { name = "MUTATIONS", class_name = "FileCoordinator" }
 ]
 
