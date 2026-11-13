@@ -3,15 +3,28 @@ import { GitHubHandler } from "./github-handler";
 import { SecondBrainMCP } from "./mcp";
 import { handleScheduled } from "./cron";
 import type { Env } from "./types";
+import { denyNonOwner } from "./authorization";
+import type { Props } from "./oauth-utils";
 
 export { SecondBrainMCP };
 
-let _provider: OAuthProvider | null = null;
+let _provider: OAuthProvider<Env> | null = null;
 
-function getProvider(): OAuthProvider {
+const mcpHandler = SecondBrainMCP.serve("/mcp", {
+  binding: "SECOND_BRAIN_MCP",
+});
+
+function getProvider(): OAuthProvider<Env> {
   if (!_provider) {
-    _provider = new OAuthProvider({
-      apiHandler: SecondBrainMCP.serve("/mcp", { binding: "SECOND_BRAIN_MCP" }),
+    _provider = new OAuthProvider<Env>({
+      apiHandler: {
+        fetch(request, env, ctx) {
+          // OAuth decrypts props on every request, including existing sessions.
+          const denied = denyNonOwner((ctx.props as Partial<Props> | undefined)?.login);
+          if (denied) return denied;
+          return mcpHandler.fetch(request, env, ctx);
+        },
+      },
       apiRoute: "/mcp",
       authorizeEndpoint: "/authorize",
       clientRegistrationEndpoint: "/register",

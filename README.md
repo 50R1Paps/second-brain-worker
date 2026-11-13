@@ -328,6 +328,8 @@ Sostituisci `<tuo-subdomain>` con il tuo subdomain reale.
 
 Al primo utilizzo, il IDE aprira il browser per l'autenticazione GitHub. Dopo il login, i 5 tool (`retrieve`, `ingest`, `reindex`, `read`, `grep`) saranno disponibili nell'AI assistant.
 
+Il servizio è privato: solo l'account GitHub `50R1Paps` è autorizzato (confronto case-insensitive in `src/authorization.ts`). Il callback rifiuta gli altri account con 403 prima di emettere credenziali. Ogni richiesta MCP ricontrolla l'identità autenticata, quindi anche token e sessioni precedenti di altri utenti sono bloccati; le credenziali del proprietario continuano a funzionare. Questo controllo è distinto dal bearer token della REST API.
+
 ### Claude Desktop
 
 Aggiungi al file `claude_desktop_config.json`:

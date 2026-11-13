@@ -27,6 +27,7 @@ import { doMetrics } from "./metrics";
 import { handleCORS, requireApiToken } from "./http";
 import type { Env } from "./types";
 import { handleGitHubWebhook } from "./webhook";
+import { denyNonOwner } from "./authorization";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
@@ -210,6 +211,11 @@ app.get("/callback", async (c) => {
     email: string | null;
   };
   const { login, name, email } = userData;
+  const denied = denyNonOwner(login);
+  if (denied) {
+    if (clearSessionCookie) denied.headers.set("Set-Cookie", clearSessionCookie);
+    return denied;
+  }
 
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
     metadata: { label: name },

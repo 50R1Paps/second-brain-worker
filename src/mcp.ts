@@ -8,8 +8,6 @@ import { readCore } from "./read";
 import { grepCore } from "./grep";
 import type { Props } from "./oauth-utils";
 
-const ALLOWED_USERNAMES = new Set<string>([]);
-
 export class SecondBrainMCP extends McpAgent<
   Env,
   Record<string, never>,
@@ -21,13 +19,6 @@ export class SecondBrainMCP extends McpAgent<
   });
 
   async init() {
-    if (
-      ALLOWED_USERNAMES.size > 0 &&
-      !ALLOWED_USERNAMES.has(this.props!.login)
-    ) {
-      return;
-    }
-
     this.server.tool(
       "retrieve",
       "Search the Second Brain knowledge base using hybrid retrieval (semantic + keyword). Returns relevant chunks from indexed wiki pages and files.",
