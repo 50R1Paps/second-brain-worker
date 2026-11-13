@@ -11,9 +11,9 @@ Second Brain Worker è un Cloudflare Worker che:
 - **Genera embedding** semantici via Workers AI (`@cf/baai/bge-base-en-v1.5`, 768 dim)
 - **Memorizza** tutto in R2 (raw), D1 (metadata + FTS5 keyword search), e Vectorize (embedding)
 - **Espone 5 tool MCP** — `retrieve`, `ingest`, `reindex`, `read`, `grep` — accessibili dal tuo IDE via OAuth GitHub
-- **Sincronizza** automaticamente la wiki via GitHub webhook: quando fichi push su `main`, i file `.md` cambiati vengono re-indicizzati
+- **Sincronizza** automaticamente la wiki via GitHub webhook: i push su `master` riconciliano i file `.md` cambiati con il contenuto corrente
 
-Tutto entro il **free tier** di Cloudflare.
+Il consumo è soggetto alle quote e al piano Cloudflare: i limiti applicativi riducono gli abusi, non garantiscono costi nulli.
 
 ---
 
@@ -50,6 +50,7 @@ Tutto entro il **free tier** di Cloudflare.
 - **Workers AI** (`AI`) — modello `bge-base-en-v1.5` per generazione embedding
 - **KV** (`OAUTH_KV`) — storage di stato/CSRF token per il flow OAuth
 - **Durable Object** (`SECOND_BRAIN_MCP`) — McpAgent che mantiene la sessione MCP
+- **Durable Object** (`MUTATIONS`, classe `FileCoordinator`) — serializza ingest, delete e reindex per file
 - **OAuth Provider** — integrazione `@cloudflare/workers-oauth-provider` con GitHub OAuth
 
 ---
@@ -72,7 +73,7 @@ Ricerca ibrida nel knowledge base: query semantica via Vectorize + query keyword
 
 ### `ingest`
 
-Carica un file nel knowledge base: il contenuto viene chunkato, embeddato, e salvato in R2 + D1 + Vectorize. Se il file esiste già, i vecchi chunk e vector vengono sostituiti.
+Carica un file nel knowledge base. Raw e vettori vengono preparati con identificatori versionati; metadata e chunk attivi vengono poi pubblicati atomicamente in D1. Un errore di staging mantiene la versione precedente. Vectorize è eventualmente consistente: la ricerca semantica può aggiornarsi dopo la pubblicazione.
 
 **Parametri:**
 
@@ -81,10 +82,13 @@ Carica un file nel knowledge base: il contenuto viene chunkato, embeddato, e sal
 - `file_type` (`"wiki_page"` | `"ingested"`, required) — tipo di file
 - `title` (string, optional) — titolo del file
 - `source` (string, optional) — URL o path sorgente
+- `push_to_github` (boolean, optional, default **false**) — solo `true` pubblica una `wiki_page` nel repository GitHub; sono ammessi esclusivamente percorsi canonici `wiki/*.md`, anche annidati
+
+Il tipo associato a un `file_key` è stabile: un ingest con tipo diverso restituisce 409 senza sostituire il documento attivo.
 
 ### `reindex`
 
-Re-indicizza un file specifico o tutti i file. Legge il raw da R2, re-esegue chunking + embedding, aggiorna Vectorize e D1.
+Re-indicizza un file specifico o tutti i file, preservando tipo, titolo e sorgente. Non scrive su GitHub. Un reindex parziale restituisce un errore con i file falliti e il conteggio completato.
 
 **Parametri:**
 
@@ -107,7 +111,7 @@ Cerca un pattern regex nel testo raw di un file indicizzato. Restituisce i match
 **Parametri:**
 
 - `file_key` (string, required) — file key del file in cui cercare
-- `pattern` (string, required) — pattern regex JavaScript
+- `pattern` (string, required) — regex RE2, massimo 512 byte UTF-8; lookaround e backreference non sono supportati
 - `max_matches` (number, optional, default 10, max 50) — numero massimo di match
 - `context` (number, optional, default 40, max 200) — caratteri di contesto attorno a ogni match
 
@@ -132,8 +136,8 @@ Oltre ai tool MCP, il Worker espone endpoint REST per script e setup. Tutti rich
 
 ## Prerequisiti
 
-- **Node.js** 22+
-- **Account Cloudflare** (free tier sufficiente)
+- **Node.js** 24+
+- **Account Cloudflare** con piano e quote sufficienti per i binding configurati
 - **GitHub OAuth App** — per l'autenticazione MCP
 - **Wiki Obsidian** in un repo GitHub (se vuoi usare il sync automatico)
 
@@ -179,6 +183,8 @@ cp wrangler.toml.example wrangler.toml
 
 Modifica `wrangler.toml` sostituendo `<your-d1-database-id>` e `<your-kv-namespace-id>` con i valori ottenuti al passo 2.
 
+Per un fork, aggiorna anche l'ID GitHub proprietario in `src/authorization.ts`, ID/nome del repository nel webhook e l'URL canonico `resourceMetadata.resource` in `src/worker.ts`. Questi sono confini di autorizzazione, non valori ricavati dal client.
+
 ### 4. Applica la migration D1
 
 ```bash
@@ -221,7 +227,7 @@ Per `COOKIE_ENCRYPTION_KEY` puoi generare una stringa casuale con:
 openssl rand -hex 32
 ```
 
-Per `GITHUB_TOKEN`, crea un [Personal Access Token](https://github.com/settings/tokens) con scope `repo` (per leggere i file `.md` via API).
+Per `GITHUB_TOKEN`, preferisci un PAT fine-grained limitato ai repository necessari: Contents read/write sulla wiki per sync/pubblicazione e Issues read/write sul repository del Worker per il promemoria. Evita un token classic con accesso indiscriminato ai repository privati. Il token OAuth usato per identificare l'utente non viene conservato e non sostituisce questo secret server-side.
 
 Per `WEBHOOK_SECRET`, genera un'altra stringa casuale e usala anche come secret del webhook GitHub.
 
@@ -244,18 +250,20 @@ Se hai la wiki Obsidian in locale, puoi ingerire tutti i file `.md` con lo scrip
 export SECOND_BRAIN_API_TOKEN=<API_TOKEN>
 
 # Locale (durante dev)
-npm run setup -- --wiki-dir /path/to/wiki --url http://localhost:8787
+npm run setup -- --publish --wiki-dir /path/to/wiki --url http://localhost:8787
 
 # Remoto (dopo deploy)
-npm run setup -- --wiki-dir /path/to/wiki --url https://second-brain.<tuo-subdomain>.workers.dev
+npm run setup -- --publish --wiki-dir /path/to/wiki --url https://second-brain.<tuo-subdomain>.workers.dev
 
 # Dry run (lista file senza ingerire)
 npm run setup:dry -- --wiki-dir /path/to/wiki
 ```
 
+Senza `--publish` lo script esegue solo una scansione locale. Qui `--publish` significa inviare al Worker, non scrivere su GitHub. La scansione rifiuta symlink/junction, uscite dalla radice, file oltre 256 KiB e oltre 1000 file.
+
 ### 9. Configura il webhook GitHub (opzionale)
 
-Per sincronizzare automaticamente la wiki quando fichi push su `main`:
+Per sincronizzare automaticamente la wiki quando fai push su `master`:
 
 1. Vai su [GitHub > Your Repo > Settings > Webhooks > Add webhook](https://github.com/50R1Paps/Mysecondbrain/settings/hooks/new)
 2. Compila:
@@ -265,7 +273,7 @@ Per sincronizzare automaticamente la wiki quando fichi push su `main`:
    - **Trigger:** "Just the push event"
 3. Salva
 
-Da ora, ogni push su `main` che modifica file `.md` in `wiki/` triggera la re-indicizzazione automatica.
+Da ora, ogni push su `master` che modifica file `.md` in `wiki/` riconcilia l'indice. Sono accettati solo repository ID `1270260749` e nome `50R1Paps/Mysecondbrain`, con firma HMAC valida. I replay dello stesso corpo vengono deduplicati per 7 giorni. Un evento di rimozione elimina dall'indice solo dopo un 404 sul contenuto corrente; errori GitHub di autenticazione o servizio non autorizzano cancellazioni.
 
 ---
 
@@ -284,11 +292,11 @@ I secret sono gestiti via `wrangler secret put` e stored nella dashboard Cloudfl
 
 ### Rotazione del `GITHUB_TOKEN`
 
-Il `GITHUB_TOKEN` (Personal Access Token con scope `repo`) è l'unico secret con scadenza. Un Cron Trigger giornaliero controlla `GITHUB_TOKEN_EXPIRY` e apre automaticamente una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza come promemoria.
+Il PAT `GITHUB_TOKEN` ha una scadenza configurata. Il Cron Trigger giornaliero controlla `GITHUB_TOKEN_EXPIRY` e apre una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza. La stessa esecuzione avvia separatamente la manutenzione dei dati.
 
 Quando ricevi la notifica (o quando il token è già scaduto):
 
-1. Crea un nuovo token su [GitHub Settings > Tokens](https://github.com/settings/tokens) con scope `repo`
+1. Crea un nuovo PAT fine-grained con i soli repository e permessi descritti nel setup
 2. Aggiorna i secret su Cloudflare:
 
 ```bash
@@ -328,7 +336,7 @@ Sostituisci `<tuo-subdomain>` con il tuo subdomain reale.
 
 Al primo utilizzo, il IDE aprira il browser per l'autenticazione GitHub. Dopo il login, i 5 tool (`retrieve`, `ingest`, `reindex`, `read`, `grep`) saranno disponibili nell'AI assistant.
 
-Il servizio è privato: solo l'account GitHub `50R1Paps` è autorizzato (confronto case-insensitive in `src/authorization.ts`). Il callback rifiuta gli altri account con 403 prima di emettere credenziali. Ogni richiesta MCP ricontrolla l'identità autenticata, quindi anche token e sessioni precedenti di altri utenti sono bloccati; le credenziali del proprietario continuano a funzionare. Questo controllo è distinto dal bearer token della REST API.
+Il servizio è privato: è autorizzato solo l'ID GitHub immutabile **57759605**, non il nome utente. Le credenziali persistono soltanto `{ githubId }`, senza token GitHub, email o nome. Token e refresh grant precedenti privi dell'ID vengono rifiutati: dopo il cutover occorre ricollegare il client. Il flusso richiede PKCE S256; i redirect devono essere HTTPS oppure HTTP su loopback locale, senza credenziali o frammenti. La REST API usa un bearer separato.
 
 ### Claude Desktop
 
@@ -348,6 +356,14 @@ Aggiungi al file `claude_desktop_config.json`:
   }
 }
 ```
+
+## Limiti e conservazione
+
+- Ingress: 20 richieste OAuth/minuto per IP e 120 richieste/minuto sulle altre rotte, con ulteriore limite per il principal autenticato. I limiti nativi sono approssimativi per location Cloudflare. La registrazione dinamica rimane pubblica, con budget globale di 100 tentativi al giorno UTC.
+- Body massimo 1 MiB, endpoint OAuth 16 KiB; file 256 KiB, frontmatter 8 KiB, massimo 512 chunk. I limiti contano i byte UTF-8 effettivamente letti, non soltanto `Content-Length`. Body compressi non ammessi.
+- Le metriche non conservano il testo delle query e scadono dopo 30 giorni. Contatori e ricevute webhook scaduti vengono eliminati dal cron.
+- Vecchi raw/vettori e staging falliti vengono raccolti dopo almeno 24 ore, solo se non più referenziati da D1. R2 deve restare privato.
+- Preview URL e invocation logging sono disabilitati. Non aggiungere token, body, query o URL OAuth ai log. I tool MCP di lettura marcano il contenuto delle fonti come dato non attendibile, non istruzioni.
 
 ---
 
@@ -372,11 +388,14 @@ Aggiungi al file `claude_desktop_config.json`:
 ```
 src/
 ├── worker.ts          # Entry point: OAuthProvider + routing
-├── mcp.ts             # SecondBrainMCP (McpAgent) con i 5 tool
+├── mcp.ts             # OwnerMCP (McpAgent) con i 5 tool
 ├── types.ts           # Tipi condivisi: Env, request/response interfaces
 ├── http.ts            # Utility HTTP: jsonResponse, handleCORS
 ├── health.ts          # Health check endpoint
 ├── ingest.ts          # Ingestion: chunking, embedding, R2+D1+Vectorize, GitHub push
+├── file-coordinator.ts # Serializzazione delle mutazioni per file
+├── storage.ts         # Garbage collection differita di raw e vettori
+├── request-security.ts # Limiti ingress, body e budget di registrazione
 ├── retrieve.ts        # Retrieve ibrido: semantic + keyword search, merge, metrics
 ├── metrics.ts         # Metriche aggregate di retrieve (latency, score, zero-result)
 ├── reindex.ts         # Reindex singolo file o tutti i file
@@ -386,17 +405,19 @@ src/
 ├── github-handler.ts  # Hono app: REST API + OAuth flow (/authorize, /callback)
 ├── oauth-utils.ts     # Utility OAuth: state, CSRF, cookie, approval dialog
 ├── webhook.ts         # GitHub webhook handler per sync automatico
-├── cron.ts            # Cron Trigger: reminder scadenza GITHUB_TOKEN via GitHub Issue
+├── cron.ts            # Retention, garbage collection e reminder scadenza PAT
 └── setup.ts           # Logica del setup script (ingest bulk)
 
 migrations/
 ├── 0001_initial_schema.sql       # Schema D1: files, chunks, chunks_fts + trigger
-└── 0002_retrieve_metrics.sql     # Tabella retrieve_metrics per observability
+├── 0002_retrieve_metrics.sql     # Metriche aggregate di retrieve
+├── 0003_security_controls.sql    # Budget, ricevute webhook e redazione query
+└── 0004_storage_versions.sql     # Coda garbage collection differita
 
 scripts/
 └── setup.ts           # CLI entry point per il setup script
 
-test/                  # Test suite (vitest + @cloudflare/vitest-pool-workers)
+test/                  # Test suite (Vitest 4 + @cloudflare/vitest-plugin)
 ```
 
 ### Test
@@ -406,7 +427,7 @@ npm test           # tutti i test
 npm run typecheck  # type checking
 ```
 
-I test usano `@cloudflare/vitest-pool-workers` per simulare l'ambiente Workers con D1, R2, e AI bindings.
+I test usano `@cloudflare/vitest-plugin` con Vitest 4 e il runtime Workers. `test/wrangler.test.toml` resta separato dai secret di produzione; ogni scenario azzera i binding e applica le migration reali.
 
 ---
 
@@ -438,6 +459,14 @@ npx wrangler d1 migrations apply second-brain --remote
 
 La migration va applicata **prima** del deploy se il codice dipende dalla nuova tabella.
 
+### Cutover sicurezza e storage versionato
+
+Prima del cutover iniziale, registra un bookmark D1 con `npx wrangler d1 time-travel info second-brain --json`. Applica le migration 0003/0004 prima del deploy.
+
+La migration Durable Object `v2-security-cutover` crea `OwnerMCP` e `FileCoordinator` ed elimina definitivamente il vecchio namespace `SecondBrainMCP`, che può contenere props OAuth precedenti. Durante questa sola migrazione, elimina anche i vecchi record del namespace dedicato `OAUTH_KV` prima di ricollegare i client. Questa pulizia invalida credenziali e sessioni, non cancella documenti o indice. Non ripristinare vecchi grant.
+
+Reindicizza poi i file esistenti per migrare raw e vettori al namespace versionato, senza write-back GitHub. I puntatori legacy restano leggibili fino alla pubblicazione della nuova versione; non eliminare manualmente gli oggetti precedenti. Confronta i conteggi D1 prima e dopo e verifica una lettura autenticata.
+
 ### Reindicizzare i documenti (popolare Vectorize)
 
 Se i vettori sono mancanti o vuoi rigenerare gli embeddings:
@@ -456,9 +485,7 @@ curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
   -d '{}'
 ```
 
-**Nota:** il reindex di tutti i file (113+) può fallire per rate limiting di Workers AI.
-Se `semantic_hits` è 0 dopo un reindex completo, reindicizza i file singolarmente
-con una pausa di ~1 secondo tra ogni chiamata. Verifica lo stato con:
+**Nota:** Workers AI e i limiti del piano possono far fallire un reindex completo. La risposta segnala i fallimenti; per migrazioni controllate usa un file per richiesta con una pausa di circa un secondo.
 
 ```bash
 npx wrangler d1 execute second-brain --remote \
@@ -507,6 +534,6 @@ score distribution, e search type breakdown (semantic/keyword/hybrid).
 - Il retrieve ibrido usa pesi 50% semantico + 50% keyword, con top-K = 20 per ciascuna modalita
 - Il content dei risultati viene troncato a 2000 caratteri per chunk
 - L'OAuth flow supporta solo GitHub come identity provider
-- Il webhook sync processa solo file `.md` nella cartella `wiki/` su push a `main`
+- Il webhook sync processa solo file `.md` nella cartella `wiki/` su push a `master`, per il repository autorizzato
 - I commit automatici del Worker su GitHub includono `[skip ci]` per non triggerare la pipeline di lint
 - Le metriche di retrieve sono best-effort: se la persistenza su D1 fallisce, il retrieve non viene interrotto

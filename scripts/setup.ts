@@ -1,14 +1,13 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { constants, openSync, closeSync, fstatSync, readFileSync, readdirSync, lstatSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   createIngestPayload,
   ingestWithRetry,
   formatProgress,
   formatSummary,
-  type SetupResult,
-  type SetupSummary,
-  type IngestFetch,
 } from "../src/setup";
+import type { SetupResult, SetupSummary, IngestFetch } from "../src/setup";
+import { MAX_FILE_BYTES } from "../src/request-security";
 
 const DEFAULT_WIKI_DIR = "wiki";
 const DEFAULT_WORKER_URL = "http://localhost:8787";
@@ -26,7 +25,7 @@ function parseArgs(argv: string[]): CliArgs {
     wikiDir: DEFAULT_WIKI_DIR,
     workerUrl: DEFAULT_WORKER_URL,
     maxRetries: MAX_RETRIES,
-    dryRun: false,
+    dryRun: true,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -43,6 +42,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--max-retries":
         args.maxRetries = parseInt(argv[++i] ?? "3", 10);
         break;
+      case "--publish":
+        args.dryRun = false;
+        break;
       case "--dry-run":
         args.dryRun = true;
         break;
@@ -51,9 +53,17 @@ function parseArgs(argv: string[]): CliArgs {
         printHelp();
         process.exit(0);
         break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
+  if (!Number.isInteger(args.maxRetries) || args.maxRetries < 1 || args.maxRetries > 3) throw new Error("Retries must be between 1 and 3");
+  const destination = new URL(args.workerUrl);
+  if (destination.username || destination.password || destination.search || destination.hash ||
+      (destination.protocol !== "https:" && !(destination.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(destination.hostname)))) {
+    throw new Error("Worker URL must use HTTPS or a literal local HTTP endpoint");
+  }
   return args;
 }
 
@@ -65,7 +75,8 @@ Options:
   -d, --wiki-dir <path>    Path to wiki directory (default: wiki)
   -u, --url <url>          Worker URL (default: http://localhost:8787)
       --max-retries <n>    Max retries per file (default: 3)
-      --dry-run            Scan and list files without ingesting
+      --dry-run            Scan and list files (default)
+      --publish            Explicitly publish the bounded scan
   -h, --help               Show this help
 
 Environment:
@@ -76,15 +87,23 @@ Environment:
 function findMarkdownFiles(dir: string): string[] {
   const results: string[] = [];
   const absoluteDir = resolve(dir);
+  const root = realpathSync(absoluteDir);
+  if (root !== absoluteDir || lstatSync(absoluteDir).isSymbolicLink()) throw new Error("Wiki root must not contain symlinks");
 
   function walk(currentDir: string): void {
     const entries = readdirSync(currentDir);
     for (const entry of entries) {
       const fullPath = join(currentDir, entry);
-      const stat = statSync(fullPath);
+      const stat = lstatSync(fullPath);
+      if (stat.isSymbolicLink()) throw new Error(`Symlink rejected: ${fullPath}`);
+      const real = realpathSync(fullPath);
+      const rel = relative(root, real);
+      if (isAbsolute(rel) || rel.startsWith(`..${sep}`) || rel === "..") throw new Error("Path escapes wiki root");
       if (stat.isDirectory()) {
         walk(fullPath);
       } else if (entry.endsWith(".md")) {
+        if (stat.size > MAX_FILE_BYTES) throw new Error(`File exceeds size limit: ${fullPath}`);
+        if (results.length >= 1000) throw new Error("Scan exceeds 1000 files");
         results.push(fullPath);
       }
     }
@@ -111,7 +130,7 @@ async function main(): Promise<void> {
     console.error(
       `Error scanning wiki directory: ${err instanceof Error ? err.message : err}`,
     );
-    process.exit(1);
+    return process.exit(1);
   }
 
   if (files.length === 0) {
@@ -155,8 +174,18 @@ async function main(): Promise<void> {
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
+    const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let content: string;
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.size > MAX_FILE_BYTES || lstatSync(file).isSymbolicLink() || realpathSync(file) !== file)
+        throw new Error("File changed or is outside the wiki root");
+      content = readFileSync(fd, "utf-8");
+      if (Buffer.byteLength(content, "utf-8") > MAX_FILE_BYTES) throw new Error("File exceeds size limit");
+    } finally {
+      closeSync(fd);
+    }
     const relPath = relative(wikiDir, file).split(sep).join("/");
-    const content = readFileSync(file, "utf-8");
     const payload = createIngestPayload(relPath, content);
 
     process.stdout.write(formatProgress(i, files.length, relPath));

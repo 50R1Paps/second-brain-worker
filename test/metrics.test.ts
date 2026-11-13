@@ -132,7 +132,7 @@ describe("Retrieve metrics — inline response", () => {
 });
 
 describe("Retrieve metrics — D1 persistence", () => {
-  it("persists metrics row to retrieve_metrics table", async () => {
+  it("persists aggregate metrics without retaining the search text", async () => {
     await ingestAndRetrieve();
 
     const db = (env as unknown as { DB: D1Database }).DB;
@@ -143,7 +143,7 @@ describe("Retrieve metrics — D1 persistence", () => {
       .first<{ query: string; latency_ms: number; result_count: number; zero_results: number }>();
 
     expect(row).not.toBeNull();
-    expect(row!.query).toBe("retrieval metrics evaluation");
+    expect(row!.query).toBe("");
     expect(typeof row!.latency_ms).toBe("number");
     expect(typeof row!.result_count).toBe("number");
     expect(row!.zero_results).toBe(0);

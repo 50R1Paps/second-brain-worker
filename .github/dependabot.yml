@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cloudflare-runtime:
+        patterns:
+          - agents
+          - "@cloudflare/*"
+          - "@modelcontextprotocol/*"
+      test-toolchain:
+        dependency-type: development
+        patterns:
+          - vitest
+          - "@vitest/*"
+          - vite
+          - wrangler
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

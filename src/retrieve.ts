@@ -18,6 +18,7 @@ const KEYWORD_WEIGHT = 0.5;
 interface SemanticHit {
   file_key: string;
   chunk_index: number;
+  vector_id: string;
   score: number;
 }
 
@@ -31,6 +32,8 @@ interface KeywordHit {
 interface MergedHit {
   file_key: string;
   chunk_index: number;
+  vector_id?: string;
+  chunk_id?: number;
   semantic_score: number;
   keyword_score: number;
   combined_score: number;
@@ -135,7 +138,7 @@ export async function retrieveCore(
   merged.sort((a, b) => b.combined_score - a.combined_score);
   const limited = merged.slice(0, limit);
 
-  const results = await enrichWithMetadata(env, limited);
+  const results = await enrichWithMetadata(env, limited, filter);
   const latency_ms = Date.now() - startTime;
 
   const scores = results.map((r) => r.score);
@@ -175,59 +178,45 @@ async function semanticSearch(
   query: string,
   filter?: RetrieveFilter,
 ): Promise<SemanticHit[]> {
-  if (!env.AI || !env.VECTORIZE) return [];
+  if (!env.AI && !env.VECTORIZE) return [];
+  if (!env.AI || !env.VECTORIZE) throw new Error("Semantic search bindings are incomplete");
 
   try {
     const result = (await env.AI.run(EMBEDDING_MODEL, {
       text: [query],
     } as never)) as { data?: number[][] };
     const queryVector = result.data?.[0];
-    if (!queryVector) return [];
+    if (!queryVector) throw new Error("Embedding response missing");
 
     const vectorResults = await env.VECTORIZE.query(queryVector, {
       topK: TOP_K,
       returnMetadata: true,
     });
 
-    let hits: SemanticHit[] = (vectorResults.matches ?? []).map((m) => ({
-      file_key: m.metadata?.file_key as string,
-      chunk_index: m.metadata?.chunk_index as number,
-      score: m.score,
-    }));
-
-    if (filter) {
-      hits = applySemanticFilters(hits, filter);
-    }
-
-    return hits;
+    const matches = vectorResults.matches ?? [];
+    if (!matches.length) return [];
+    const rows = await env.DB.prepare(
+      `SELECT c.vector_id, c.file_key, c.chunk_index, c.section, f.file_type
+       FROM chunks c JOIN files f ON f.file_key = c.file_key
+       WHERE c.vector_id IN (${matches.map(() => "?").join(",")})`
+    ).bind(...matches.map(m => m.id)).all<{ vector_id: string; file_key: string; chunk_index: number; section: string | null; file_type: string }>();
+    const active = new Map(rows.results.map(row => [row.vector_id, row]));
+    return matches.flatMap(match => {
+      const row = active.get(match.id);
+      if (!row || (filter?.file_type && row.file_type !== filter.file_type) ||
+          (filter?.file_key_prefix && !row.file_key.startsWith(filter.file_key_prefix)) ||
+          (filter?.section_prefix && !(row.section ?? "").startsWith(filter.section_prefix))) return [];
+      return [{ file_key: row.file_key, chunk_index: row.chunk_index, vector_id: match.id, score: match.score }];
+    });
   } catch {
-    return [];
+    throw new Error("Semantic search failed");
   }
 }
 
-function applySemanticFilters(
-  hits: SemanticHit[],
-  filter: RetrieveFilter,
-): SemanticHit[] {
-  return hits.filter((h) => {
-    if (
-      filter.file_key_prefix &&
-      !h.file_key.startsWith(filter.file_key_prefix)
-    ) {
-      return false;
-    }
-    return true;
-  });
-}
 
 function buildFtsQuery(query: string): string {
-  const terms = query
-    .replace(/["*+\-:()]/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
-  if (terms.length === 0) return "";
-  return terms.join(" OR ");
+  return (query.match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .map(term => `"${term.replace(/"/g, '""')}"`).join(" OR ");
 }
 
 async function keywordSearch(
@@ -252,12 +241,12 @@ async function keywordSearch(
     params.push(filter.file_type);
   }
   if (filter?.section_prefix) {
-    sql += " AND c.section LIKE ? || '%'";
-    params.push(filter.section_prefix);
+    sql += " AND c.section LIKE ? || '%' ESCAPE '\\' AND substr(c.section, 1, length(?)) = ? COLLATE BINARY";
+    params.push(filter.section_prefix.replace(/[\\%_]/g, "\\$&"), filter.section_prefix, filter.section_prefix);
   }
   if (filter?.file_key_prefix) {
-    sql += " AND c.file_key LIKE ? || '%'";
-    params.push(filter.file_key_prefix);
+    sql += " AND c.file_key LIKE ? || '%' ESCAPE '\\' AND substr(c.file_key, 1, length(?)) = ? COLLATE BINARY";
+    params.push(filter.file_key_prefix.replace(/[\\%_]/g, "\\$&"), filter.file_key_prefix, filter.file_key_prefix);
   }
 
   sql += " ORDER BY chunks_fts.rank LIMIT ?";
@@ -286,8 +275,8 @@ async function keywordSearch(
       score:
         maxRank === minRank ? 1.0 : (maxRank - r.rank) / (maxRank - minRank),
     }));
-  } catch {
-    return [];
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -302,6 +291,7 @@ function mergeHits(
     map.set(key, {
       file_key: s.file_key,
       chunk_index: s.chunk_index,
+      vector_id: s.vector_id,
       semantic_score: s.score,
       keyword_score: 0,
       combined_score: SEMANTIC_WEIGHT * s.score,
@@ -314,6 +304,7 @@ function mergeHits(
     const existing = map.get(key);
     if (existing) {
       existing.keyword_score = k.score;
+      existing.chunk_id = k.id;
       existing.combined_score =
         SEMANTIC_WEIGHT * existing.semantic_score + KEYWORD_WEIGHT * k.score;
       existing.search_type = "hybrid";
@@ -321,6 +312,7 @@ function mergeHits(
       map.set(key, {
         file_key: k.file_key,
         chunk_index: k.chunk_index,
+        chunk_id: k.id,
         semantic_score: 0,
         keyword_score: k.score,
         combined_score: KEYWORD_WEIGHT * k.score,
@@ -335,6 +327,7 @@ function mergeHits(
 async function enrichWithMetadata(
   env: Env,
   hits: MergedHit[],
+  filter?: RetrieveFilter,
 ): Promise<RetrieveResult[]> {
   if (hits.length === 0) return [];
 
@@ -347,7 +340,7 @@ async function enrichWithMetadata(
   }
 
   const sql =
-    "SELECT c.file_key, c.chunk_index, c.content, c.section, c.wikilinks, f.title " +
+    "SELECT c.id, c.vector_id, c.file_key, c.chunk_index, c.content, c.section, c.wikilinks, f.title, f.file_type " +
     "FROM chunks c " +
     "JOIN files f ON f.file_key = c.file_key " +
     "WHERE " +
@@ -356,6 +349,9 @@ async function enrichWithMetadata(
   const result = await env.DB.prepare(sql)
     .bind(...params)
     .all<{
+      id: number;
+      vector_id: string | null;
+      file_type: string;
       file_key: string;
       chunk_index: number;
       content: string;
@@ -367,6 +363,9 @@ async function enrichWithMetadata(
   const metaMap = new Map<
     string,
     {
+      id: number;
+      vector_id: string | null;
+      file_type: string;
       content: string;
       section: string | null;
       wikilinks: string | null;
@@ -376,6 +375,9 @@ async function enrichWithMetadata(
 
   for (const row of result.results) {
     metaMap.set(`${row.file_key}:${row.chunk_index}`, {
+      id: row.id,
+      vector_id: row.vector_id,
+      file_type: row.file_type,
       content: row.content,
       section: row.section,
       wikilinks: row.wikilinks,
@@ -386,7 +388,10 @@ async function enrichWithMetadata(
   const enriched: RetrieveResult[] = [];
   for (const h of hits) {
     const meta = metaMap.get(`${h.file_key}:${h.chunk_index}`);
-    if (!meta) continue;
+    if (!meta || (h.vector_id && h.vector_id !== meta.vector_id) || (h.chunk_id && h.chunk_id !== meta.id) ||
+      (filter?.file_type && meta.file_type !== filter.file_type) ||
+      (filter?.section_prefix && !(meta.section ?? "").startsWith(filter.section_prefix)) ||
+      (filter?.file_key_prefix && !h.file_key.startsWith(filter.file_key_prefix))) continue;
 
     let wikilinks: string[] = [];
     if (meta.wikilinks) {
@@ -425,7 +430,7 @@ async function persistRetrieveMetrics(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
-      query.slice(0, 500),
+      "",
       metrics.latency_ms,
       metrics.result_count,
       metrics.total_candidates,

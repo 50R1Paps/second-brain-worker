@@ -1,8 +1,8 @@
 import { jsonResponse } from "./http";
 
-/** GitHub logins are case-insensitive. Missing identity fails closed. */
-export function denyNonOwner(login: unknown): Response | null {
-  if (typeof login === "string" && login.toLowerCase() === "50r1paps") {
+/** GitHub's immutable numeric account ID is the authorization boundary. */
+export function denyNonOwner(githubId: unknown): Response | null {
+  if (githubId === 57759605) {
     return null;
   }
   return jsonResponse(

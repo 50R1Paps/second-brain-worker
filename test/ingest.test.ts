@@ -109,7 +109,10 @@ describe("POST /api/ingest — successful ingestion", () => {
 
     const { env } = await import("cloudflare:test");
     const r2 = (env as unknown as { RAW_BUCKET: R2Bucket }).RAW_BUCKET;
-    const obj = await r2.get("wiki/r2-test.md");
+    const db = (env as unknown as { DB: D1Database }).DB;
+    const file = await db.prepare("SELECT r2_key FROM files WHERE file_key = ?").bind("wiki/r2-test.md").first<{ r2_key: string }>();
+    expect(file!.r2_key).toMatch(/^versions\/wiki_page\//);
+    const obj = await r2.get(file!.r2_key);
     expect(obj).not.toBeNull();
     const text = await obj!.text();
     expect(text).toBe("## Hello\nWorld");
@@ -189,7 +192,7 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
       .bind("wiki/reingest-test.md")
       .first<{ count: number }>();
 
-    // Re-ingest with different content
+    // Re-ingest with different content, preserving the file's classification.
     await apiFetch("http://localhost/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -206,12 +209,42 @@ describe("POST /api/ingest — re-ingestion idempotency", () => {
 
     // Should have chunks from the second ingest only, no duplicates
     const file = await db
-      .prepare("SELECT chunk_count FROM files WHERE file_key = ?")
+      .prepare("SELECT chunk_count, file_type FROM files WHERE file_key = ?")
       .bind("wiki/reingest-test.md")
-      .first<{ chunk_count: number }>();
+      .first<{ chunk_count: number; file_type: string }>();
 
     expect(second!.count).toBe(file!.chunk_count);
+    expect(file!.file_type).toBe("wiki_page");
     expect(second!.count).not.toBe(first!.count + second!.count);
+  });
+
+  it("rejects type changes without replacing the active document", async () => {
+    const payload = { file_key: "wiki/stable-type.md", file_type: "wiki_page",
+      content: "## Content\nOriginal classification proof", push_to_github: false };
+    const created = await apiFetch("http://localhost/api/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    expect(created.status, await created.text()).toBe(200);
+    const conflict = await apiFetch("http://localhost/api/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, file_type: "ingested", content: "Replacement" }),
+    });
+    expect(conflict.status).toBe(409);
+    const read = await apiFetch("http://localhost/api/read", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_key: payload.file_key }),
+    });
+    expect(read.status).toBe(200);
+    const document = await read.json<{ content: string }>();
+    expect(document.content).toContain("Original classification proof");
+    expect(document.content).not.toContain("Replacement");
+    const retrieved = await apiFetch("http://localhost/api/retrieve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "classification", file_type: "wiki_page" }),
+    });
+    expect(retrieved.status).toBe(200);
+    const result = await retrieved.json<{ results: Array<{ file_key: string }> }>();
+    expect(result.results.some(item => item.file_key === payload.file_key)).toBe(true);
   });
 });
 
@@ -253,7 +286,7 @@ describe("POST /api/ingest — push_to_github", () => {
     expect(data.github_error).toBeDefined();
   });
 
-  it("defaults to pushing wiki_page to GitHub when push_to_github not specified", async () => {
+  it("indexes without publishing when push_to_github is omitted", async () => {
     await ensureSchema();
     const response = await apiFetch("http://localhost/api/ingest", {
       method: "POST",
@@ -268,7 +301,7 @@ describe("POST /api/ingest — push_to_github", () => {
     const data = await response.json<{
       github_pushed?: boolean;
     }>();
-    expect(data.github_pushed).toBeDefined();
+    expect(data.github_pushed).toBeUndefined();
   });
 
   it("does not push to GitHub when push_to_github is explicitly false", async () => {
@@ -356,5 +389,6 @@ describe("vectorIdFor", () => {
     expect(new TextEncoder().encode(id).byteLength).toBeLessThanOrEqual(64);
     expect(id).toBe(await vectorIdFor(longKey, 12));
     expect(id).not.toBe(await vectorIdFor(longKey, 13));
+    expect(await vectorIdFor(longKey, 12, "version-a")).not.toBe(await vectorIdFor(longKey, 12, "version-b"));
   });
 });

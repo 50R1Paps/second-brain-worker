@@ -6,7 +6,6 @@ import { Hono } from "hono";
 import {
   fetchUpstreamAuthToken,
   getUpstreamAuthorizeUrl,
-  type Props,
   addApprovedClient,
   bindStateToSession,
   createOAuthState,
@@ -16,7 +15,9 @@ import {
   renderApprovalDialog,
   validateCSRFToken,
   validateOAuthState,
+  validateAuthPolicy,
 } from "./oauth-utils";
+import type { Props } from "./oauth-utils";
 import { doHealth } from "./health";
 import { doIngest } from "./ingest";
 import { doRetrieve } from "./retrieve";
@@ -28,6 +29,27 @@ import { handleCORS, requireApiToken } from "./http";
 import type { Env } from "./types";
 import { handleGitHubWebhook } from "./webhook";
 import { denyNonOwner } from "./authorization";
+import { checkPrincipalLimit } from "./request-security";
+
+async function validateStoredRequest(
+  request: AuthRequest,
+  incoming: Request,
+  provider: OAuthHelpers,
+): Promise<AuthRequest> {
+  validateAuthPolicy(request);
+  const url = new URL("/authorize", incoming.url);
+  url.searchParams.set("response_type", request.responseType);
+  url.searchParams.set("client_id", request.clientId);
+  url.searchParams.set("redirect_uri", request.redirectUri);
+  url.searchParams.set("code_challenge", request.codeChallenge!);
+  url.searchParams.set("code_challenge_method", "S256");
+  if (request.state) url.searchParams.set("state", request.state);
+  if (request.scope.length) url.searchParams.set("scope", request.scope.join(" "));
+  if (request.resource) url.searchParams.set("resource", request.resource);
+  const parsed = await provider.parseAuthRequest(new Request(url));
+  validateAuthPolicy(parsed);
+  return parsed;
+}
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
@@ -40,6 +62,8 @@ app.get("/api/health", (c) => doHealth(c.env));
 app.use("/api/*", async (c, next) => {
   const denied = requireApiToken(c.req.raw, c.env);
   if (denied) return denied;
+  const limited = await checkPrincipalLimit(c.env, "rest-owner");
+  if (limited) return limited;
   await next();
 });
 
@@ -64,9 +88,14 @@ app.post("/webhook/github", (c) => handleGitHubWebhook(c.req.raw, c.env));
 // --- OAuth flow ---
 
 app.get("/authorize", async (c) => {
-  const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  let oauthReqInfo: AuthRequest;
+  try {
+    oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+    validateAuthPolicy(oauthReqInfo);
+  } catch {
+    return c.text("Invalid authorization request", 400);
+  }
   const { clientId } = oauthReqInfo;
-  if (!clientId) return c.text("Invalid request", 400);
 
   if (
     await isClientApproved(c.req.raw, clientId, c.env.COOKIE_ENCRYPTION_KEY)
@@ -115,6 +144,7 @@ app.post("/authorize", async (c) => {
     if (!state.oauthReqInfo || !state.oauthReqInfo.clientId) {
       return c.text("Invalid request", 400);
     }
+    state.oauthReqInfo = await validateStoredRequest(state.oauthReqInfo, c.req.raw, c.env.OAUTH_PROVIDER);
 
     const approvedClientCookie = await addApprovedClient(
       c.req.raw,
@@ -141,7 +171,7 @@ app.post("/authorize", async (c) => {
     );
   } catch (error) {
     if (error instanceof OAuthError) return error.toResponse();
-    return c.text(`Internal server error`, 500);
+    return c.text("Invalid authorization request", 400);
   }
 });
 
@@ -176,10 +206,11 @@ app.get("/callback", async (c) => {
   try {
     const result = await validateOAuthState(c.req.raw, c.env.OAUTH_KV);
     oauthReqInfo = result.oauthReqInfo;
+    oauthReqInfo = await validateStoredRequest(oauthReqInfo, c.req.raw, c.env.OAUTH_PROVIDER);
     clearSessionCookie = result.clearCookie;
   } catch (error) {
     if (error instanceof OAuthError) return error.toResponse();
-    return c.text("Internal server error", 500);
+    return c.text("Invalid authorization request", 400);
   }
 
   if (!oauthReqInfo.clientId) {
@@ -205,25 +236,31 @@ app.get("/callback", async (c) => {
   if (!userResponse.ok) {
     return c.text("Failed to fetch GitHub user", 500);
   }
-  const userData = (await userResponse.json()) as {
-    login: string;
-    name: string | null;
-    email: string | null;
-  };
-  const { login, name, email } = userData;
-  const denied = denyNonOwner(login);
+  let githubId: unknown;
+  try {
+    const userData = await userResponse.json<{ id?: unknown }>();
+    githubId = userData.id;
+  } catch {
+    return c.text("Invalid GitHub user response", 502);
+  }
+  const denied = denyNonOwner(githubId);
   if (denied) {
     if (clearSessionCookie) denied.headers.set("Set-Cookie", clearSessionCookie);
     return denied;
   }
 
-  const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
-    metadata: { label: name },
-    props: { accessToken, email, login, name } as Props,
-    request: oauthReqInfo,
-    scope: oauthReqInfo.scope,
-    userId: login,
-  });
+  let redirectTo: string;
+  try {
+    ({ redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
+      metadata: {},
+      props: { githubId: githubId as number } satisfies Props,
+      request: oauthReqInfo,
+      scope: oauthReqInfo.scope,
+      userId: String(githubId),
+    }));
+  } catch {
+    return c.text("Invalid authorization request", 400);
+  }
 
   const headers = new Headers({ Location: redirectTo });
   if (clearSessionCookie) headers.set("Set-Cookie", clearSessionCookie);

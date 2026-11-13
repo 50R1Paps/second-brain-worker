@@ -95,7 +95,7 @@ function splitSectionIntoChunks(
     return [fullContent];
   }
 
-  const contentLimit = Math.max(1, MAX_CHUNK_SIZE - frontmatter.length);
+  const contentLimit = Math.max(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE - frontmatter.length);
   return splitTextSafely(sectionContent, contentLimit).map(
     (content) => frontmatter + content,
   );

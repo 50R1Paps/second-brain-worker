@@ -35,6 +35,11 @@ Questo è il contenuto della sezione A. Contiene un wikilink [[Example]].
 Contenuto della sezione B senza wikilink.`;
 
 describe("chunkMarkdown", () => {
+  it("does not amplify a large frontmatter into one chunk per character", () => {
+    const text = `---\ntitle: ${"x".repeat(1100)}\n---\n${"body ".repeat(8)}`;
+    expect(chunkMarkdown(text)).toHaveLength(1);
+  });
+
   it("extracts frontmatter and includes it in every chunk", () => {
     const chunks = chunkMarkdown(SAMPLE_WITH_FRONTMATTER);
     expect(chunks.length).toBeGreaterThan(0);

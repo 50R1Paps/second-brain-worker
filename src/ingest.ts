@@ -1,5 +1,8 @@
-import { chunkMarkdown, type Chunk } from "./chunker";
+import { chunkMarkdown } from "./chunker";
+import type { Chunk } from "./chunker";
 import { jsonResponse } from "./http";
+import { MAX_FILE_BYTES, MAX_FRONTMATTER_BYTES, MAX_CHUNKS } from "./request-security";
+import { STORAGE_GRACE_SECONDS } from "./storage";
 import type {
   Env,
   IngestRequest,
@@ -18,10 +21,10 @@ type FetchFunction = typeof fetch;
  * SHA-256 hex is exactly 64 bytes. Lookups go through chunk metadata and the
  * vector_id stored in D1, never by parsing the id.
  */
-export async function vectorIdFor(fileKey: string, chunkIndex: number): Promise<string> {
+export async function vectorIdFor(fileKey: string, chunkIndex: number, version = ""): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${fileKey}:${chunkIndex}`),
+    new TextEncoder().encode(JSON.stringify([fileKey, version, chunkIndex])),
   );
   return [...new Uint8Array(digest)]
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -61,6 +64,7 @@ async function pushToGitHub(
   content: string,
   fetchFn: FetchFunction = fetch,
 ): Promise<{ pushed: boolean; error?: string }> {
+  if (!isCanonicalWikiPath(fileKey)) return { pushed: false, error: "Invalid wiki path" };
   if (!env.GITHUB_TOKEN) {
     return { pushed: false, error: "GITHUB_TOKEN not configured" };
   }
@@ -83,14 +87,17 @@ async function pushToGitHub(
     if (existing.ok) {
       const data = (await existing.json()) as { sha?: string };
       sha = data.sha;
+      if (!sha) return { pushed: false, error: "GitHub response missing file SHA" };
+    } else if (existing.status !== 404) {
+      return { pushed: false, error: `GitHub API ${existing.status}` };
     }
   } catch {
-    // File doesn't exist yet, proceed without SHA
+    return { pushed: false, error: "GitHub lookup failed" };
   }
 
   const body = {
     message: `chore: ingest ${fileKey} via Second Brain Worker [skip ci]`,
-    content: btoa(safeContent),
+    content: btoa(Array.from(new TextEncoder().encode(safeContent), b => String.fromCharCode(b)).join("")),
     branch: "master",
     ...(sha ? { sha } : {}),
   };
@@ -115,12 +122,20 @@ async function pushToGitHub(
   return { pushed: true };
 }
 
+export function isCanonicalWikiPath(path: string): boolean {
+  return path.startsWith("wiki/") && path.endsWith(".md") &&
+    !/[\\\x00-\x1f\x7f-\x9f]/.test(path) &&
+    path.split("/").every(segment => segment !== "" && segment !== "." && segment !== "..");
+}
+
 export function validateIngestRequest(body: unknown): IngestRequest | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
   if (typeof b.file_key !== "string" || b.file_key.length === 0) return null;
   if (typeof b.content !== "string" || b.content.length === 0) return null;
   if (b.file_type !== "wiki_page" && b.file_type !== "ingested") return null;
+  if (new TextEncoder().encode(b.content).byteLength > MAX_FILE_BYTES) return null;
+  if (b.file_type === "wiki_page" && b.push_to_github === true && !isCanonicalWikiPath(b.file_key)) return null;
   return {
     file_key: b.file_key,
     content: b.content,
@@ -163,233 +178,119 @@ export async function doIngest(request: Request, env: Env): Promise<Response> {
   return jsonResponse(result);
 }
 
-export async function ingestCore(
-  env: Env,
-  parsed: IngestRequest,
-): Promise<IngestResult | Response> {
+export async function ingestCore(env: Env, parsed: IngestRequest): Promise<IngestResult | Response> {
+  if (!validateIngestRequest(parsed)) return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Invalid ingest request" } }, 400);
+  const response = await env.MUTATIONS.get(env.MUTATIONS.idFromName(parsed.file_key)).fetch("https://coordinator/", {
+    method: "POST", body: JSON.stringify({ kind: "ingest", payload: parsed }),
+  });
+  return response.ok ? await response.json() as IngestResult : response;
+}
+
+/** Invoked only by FileCoordinator. */
+export async function ingestMutation(env: Env, parsed: IngestRequest): Promise<IngestResult | Response> {
   const { file_key, content, file_type, title, source } = parsed;
-  const r2Key = file_type === "wiki_page" ? file_key : `files/${file_key}`;
-
   try {
-    // 1. R2 PUT raw content
-    await env.RAW_BUCKET.put(r2Key, content);
-
-    // 2. Chunk the content
+    if (!validateIngestRequest(parsed)) return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Invalid ingest request" } }, 400);
+    const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? "";
+    if (new TextEncoder().encode(frontmatter).byteLength > MAX_FRONTMATTER_BYTES)
+      return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Frontmatter exceeds limit" } }, 400);
     const chunks = chunkMarkdown(content);
-    if (chunks.length === 0) {
-      return jsonResponse(
-        {
-          error: {
-            code: "EMPTY_CONTENT",
-            message: "No chunks produced from content",
-          },
-        },
-        400,
-      );
-    }
-
-    // 3. Re-ingestion: delete old chunks for this file_key
-    const existingChunks = await env.DB.prepare(
-      "SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL",
-    )
-      .bind(file_key)
-      .all<{ vector_id: string }>();
-    const existingVectorIds = existingChunks.results.map(
-      (chunk) => chunk.vector_id,
-    );
-    if (env.VECTORIZE && existingVectorIds.length > 0) {
-      await env.VECTORIZE.deleteByIds(existingVectorIds);
-    }
-    await env.DB.prepare("DELETE FROM chunks WHERE file_key = ?")
-      .bind(file_key)
-      .run();
-
-    // 4. Generate embeddings via Workers AI (if available)
+    if (!chunks.length || chunks.length > MAX_CHUNKS)
+      return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Invalid chunk count" } }, 400);
+    const old = await env.DB.prepare("SELECT file_type, r2_key FROM files WHERE file_key = ?").bind(file_key)
+      .first<{ file_type: string; r2_key: string }>();
+    if (old && old.file_type !== file_type)
+      return jsonResponse({ error: { code: "TYPE_CONFLICT", message: "File type cannot be changed" } }, 409);
+    const previous = await env.DB.prepare("SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL")
+      .bind(file_key).all<{ vector_id: string }>();
+    const version = crypto.randomUUID();
+    const digest = await vectorIdFor(file_key, -1, version);
+    const r2Key = `versions/${file_type}/${digest}`;
     const embeddings = env.AI ? await generateEmbeddings(env.AI, chunks) : null;
-
-    // 5. Upsert vectors into Vectorize (if available)
-    let vectorIds: string[] = [];
+    if (env.AI && !env.VECTORIZE) throw new Error("Vectorize is required when AI is configured");
+    const ids = embeddings ? await Promise.all(chunks.map(c => vectorIdFor(file_key, c.chunk_index, version))) : [];
+    const due = Math.floor(Date.now() / 1000) + STORAGE_GRACE_SECONDS;
+    const queue = (kind: string, key: string) => env.DB.prepare(
+      "INSERT INTO storage_gc (kind, storage_key, not_before) VALUES (?, ?, ?) ON CONFLICT(kind, storage_key) DO UPDATE SET not_before = excluded.not_before"
+    ).bind(kind, key, due);
+    await env.DB.batch([queue("raw", r2Key), ...ids.map(id => queue("vector", id))]);
+    await env.RAW_BUCKET.put(r2Key, content);
     if (embeddings && env.VECTORIZE) {
-      const ids = await Promise.all(
-        chunks.map((chunk) => vectorIdFor(file_key, chunk.chunk_index)),
-      );
-      const vectors = chunks.map((chunk, i) => ({
-        id: ids[i],
-        values: embeddings[i],
-        metadata: {
-          file_key,
-          chunk_index: chunk.chunk_index,
-          section: chunk.section,
-        },
-      }));
-      await env.VECTORIZE.upsert(vectors);
-      vectorIds = vectors.map((v) => v.id);
+      await env.VECTORIZE.upsert(chunks.map((chunk, i) => ({
+        id: ids[i], values: embeddings[i],
+        metadata: { file_key, chunk_index: chunk.chunk_index, section: chunk.section },
+      })));
     }
-
-    // 6. D1: insert file metadata + chunks in a single batch
     const now = new Date().toISOString();
-    const dbStatements: D1PreparedStatement[] = [
-      env.DB.prepare(
-        `INSERT INTO files (file_key, file_type, r2_key, title, source, created_at, updated_at, chunk_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(file_key) DO UPDATE SET
-           file_type = excluded.file_type,
-           r2_key = excluded.r2_key,
-           title = excluded.title,
-           source = excluded.source,
-           updated_at = excluded.updated_at,
-           chunk_count = excluded.chunk_count`,
-      ).bind(
-        file_key,
-        file_type,
-        r2Key,
-        title ?? null,
-        source ?? null,
-        now,
-        now,
-        chunks.length,
-      ),
+    const statements: D1PreparedStatement[] = [
+      env.DB.prepare(`INSERT INTO files (file_key, file_type, r2_key, title, source, created_at, updated_at, chunk_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(file_key) DO UPDATE SET
+        r2_key=excluded.r2_key, title=excluded.title, source=excluded.source,
+        updated_at=excluded.updated_at, chunk_count=excluded.chunk_count`)
+        .bind(file_key, file_type, r2Key, title ?? null, source ?? null, now, now, chunks.length),
+      env.DB.prepare("DELETE FROM chunks WHERE file_key = ?").bind(file_key),
+      ...chunks.map((chunk, i) => env.DB.prepare(
+        "INSERT INTO chunks (file_key, chunk_index, content, section, wikilinks, vector_id) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(file_key, chunk.chunk_index, chunk.content, chunk.section, JSON.stringify(chunk.wikilinks), ids[i] ?? null)),
+      env.DB.prepare("DELETE FROM storage_gc WHERE kind = 'raw' AND storage_key = ?").bind(r2Key),
+      ...ids.map(id => env.DB.prepare("DELETE FROM storage_gc WHERE kind = 'vector' AND storage_key = ?").bind(id)),
     ];
-
-    for (const chunk of chunks) {
-      const vectorId = vectorIds[chunk.chunk_index] ?? null;
-      dbStatements.push(
-        env.DB.prepare(
-          `INSERT INTO chunks (file_key, chunk_index, content, section, wikilinks, vector_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          file_key,
-          chunk.chunk_index,
-          chunk.content,
-          chunk.section,
-          JSON.stringify(chunk.wikilinks),
-          vectorId,
-        ),
-      );
+    if (old) statements.push(queue("raw", old.r2_key));
+    statements.push(...previous.results.map(row => queue("vector", row.vector_id)));
+    await env.DB.batch(statements);
+    let github: { pushed: boolean; error?: string } | undefined;
+    if (file_type === "wiki_page" && parsed.push_to_github === true) {
+      try { github = await pushToGitHub(env, file_key, content); }
+      catch { github = { pushed: false, error: "GitHub publication failed" }; }
     }
-
-    await env.DB.batch(dbStatements);
-
-    let githubPushed: boolean | undefined;
-    let githubError: string | undefined;
-
-    if (file_type === "wiki_page" && parsed.push_to_github !== false) {
-      try {
-        const ghResult = await pushToGitHub(env, file_key, content);
-        githubPushed = ghResult.pushed;
-        if (!ghResult.pushed) {
-          githubError = ghResult.error;
-        }
-      } catch (err) {
-        githubPushed = false;
-        githubError =
-          err instanceof Error ? err.message : "Unknown GitHub push error";
-      }
-    }
-
-    return {
-      file_key,
-      chunk_count: chunks.length,
-      status: "ok",
-      ...(githubPushed !== undefined ? { github_pushed: githubPushed } : {}),
-      ...(githubError ? { github_error: githubError } : {}),
-    };
-  } catch (err) {
-    return jsonResponse(
-      {
-        error: {
-          code: "INGESTION_FAILED",
-          message:
-            err instanceof Error
-              ? err.message
-              : "Unknown error during ingestion",
-        },
-      },
-      500,
-    );
+    return { file_key, chunk_count: chunks.length, status: "ok",
+      ...(github ? { github_pushed: github.pushed, ...(github.error ? { github_error: github.error } : {}) } : {}) };
+  } catch {
+    return jsonResponse({ error: { code: "INGESTION_FAILED", message: "Storage or embedding failed" } }, 500);
   }
 }
 
 const EMBEDDING_BATCH_SIZE = 5;
 
-async function generateEmbeddings(
-  ai: Ai,
-  chunks: Chunk[],
-): Promise<number[][] | null> {
-  try {
-    const allEmbeddings: number[][] = [];
-    for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
-      const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
-      const texts = batch.map((c) => c.content);
-      let result = (await ai.run(EMBEDDING_MODEL, {
-        text: texts,
-      } as never)) as { data?: number[][] };
-
-      if (!result.data) {
-        for (const c of batch) {
-          try {
-            const single = (await ai.run(EMBEDDING_MODEL, {
-              text: [c.content],
-            } as never)) as { data?: number[][] };
-            allEmbeddings.push(single.data?.[0] ?? new Array(768).fill(0));
-          } catch {
-            allEmbeddings.push(new Array(768).fill(0));
-          }
-        }
-      } else {
-        allEmbeddings.push(...result.data);
-      }
+async function generateEmbeddings(ai: Ai, chunks: Chunk[]): Promise<number[][]> {
+  const embeddings: number[][] = [];
+  for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
+    const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+    const result = await ai.run(EMBEDDING_MODEL, { text: batch.map(c => c.content) } as never) as { data?: number[][] };
+    if (!result.data || result.data.length !== batch.length ||
+        result.data.some(v => !Array.isArray(v) || !v.length || v.some(n => !Number.isFinite(n)))) {
+      throw new Error("Invalid embedding response");
     }
-    return allEmbeddings;
-  } catch {
-    return null;
+    embeddings.push(...result.data);
   }
+  return embeddings;
 }
 
-export async function deleteFileCore(
-  env: Env,
-  fileKey: string,
-): Promise<DeleteFileResult | Response> {
+export async function deleteFileCore(env: Env, fileKey: string): Promise<DeleteFileResult | Response> {
+  const response = await env.MUTATIONS.get(env.MUTATIONS.idFromName(fileKey)).fetch("https://coordinator/", {
+    method: "POST", body: JSON.stringify({ kind: "delete", fileKey }),
+  });
+  return response.ok ? await response.json() as DeleteFileResult : response;
+}
+
+/** Invoked only by FileCoordinator. */
+export async function deleteMutation(env: Env, fileKey: string): Promise<DeleteFileResult | Response> {
   try {
-    const file = await env.DB.prepare(
-      "SELECT file_key, r2_key FROM files WHERE file_key = ?",
-    )
-      .bind(fileKey)
-      .first<{ file_key: string; r2_key: string }>();
-
-    if (!file)
-      return { file_key: fileKey, deleted: false, status: "not_found" };
-
-    const chunks = await env.DB.prepare(
-      "SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL",
-    )
-      .bind(fileKey)
-      .all<{ vector_id: string }>();
-
-    const vectorIds = chunks.results.map((chunk) => chunk.vector_id);
-    if (env.VECTORIZE && vectorIds.length > 0) {
-      await env.VECTORIZE.deleteByIds(vectorIds);
-    }
-
-    await env.RAW_BUCKET.delete(file.r2_key);
+    const file = await env.DB.prepare("SELECT r2_key FROM files WHERE file_key = ?").bind(fileKey).first<{ r2_key: string }>();
+    if (!file) return { file_key: fileKey, deleted: false, status: "not_found" };
+    const chunks = await env.DB.prepare("SELECT vector_id FROM chunks WHERE file_key = ? AND vector_id IS NOT NULL")
+      .bind(fileKey).all<{ vector_id: string }>();
+    const due = Math.floor(Date.now() / 1000) + STORAGE_GRACE_SECONDS;
+    const queue = (kind: string, key: string) => env.DB.prepare(
+      "INSERT INTO storage_gc (kind, storage_key, not_before) VALUES (?, ?, ?) ON CONFLICT(kind, storage_key) DO UPDATE SET not_before = excluded.not_before"
+    ).bind(kind, key, due);
     await env.DB.batch([
       env.DB.prepare("DELETE FROM chunks WHERE file_key = ?").bind(fileKey),
       env.DB.prepare("DELETE FROM files WHERE file_key = ?").bind(fileKey),
+      queue("raw", file.r2_key), ...chunks.results.map(c => queue("vector", c.vector_id)),
     ]);
-
     return { file_key: fileKey, deleted: true, status: "ok" };
-  } catch (err) {
-    return jsonResponse(
-      {
-        error: {
-          code: "DELETE_FAILED",
-          message:
-            err instanceof Error
-              ? err.message
-              : "Unknown error during deletion",
-        },
-      },
-      500,
-    );
+  } catch {
+    return jsonResponse({ error: { code: "DELETE_FAILED", message: "Storage deletion failed" } }, 500);
   }
 }

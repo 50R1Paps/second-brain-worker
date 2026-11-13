@@ -1,10 +1,13 @@
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import type { FileCoordinator } from "./file-coordinator";
+
 export interface Env {
   RAW_BUCKET: R2Bucket;
   DB: D1Database;
   VECTORIZE?: VectorizeIndex;
   AI?: Ai;
   OAUTH_KV: KVNamespace;
-  OAUTH_PROVIDER: import("@cloudflare/workers-oauth-provider").OAuthHelpers;
+  OAUTH_PROVIDER: OAuthHelpers;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   COOKIE_ENCRYPTION_KEY: string;
@@ -14,6 +17,9 @@ export interface Env {
   /** Bearer token for the REST API (/api/*, except /api/health). */
   API_TOKEN?: string;
   SECOND_BRAIN_MCP: DurableObjectNamespace;
+  MUTATIONS: DurableObjectNamespace<FileCoordinator>;
+  AUTH_RATE_LIMITER: RateLimit;
+  REQUEST_RATE_LIMITER: RateLimit;
 }
 
 export interface IngestRequest {
