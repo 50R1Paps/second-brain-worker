@@ -190,7 +190,8 @@ export async function ingestCore(env: Env, parsed: IngestRequest): Promise<Inges
 export async function ingestMutation(env: Env, parsed: IngestRequest): Promise<IngestResult | Response> {
   const { file_key, content, file_type, title, source } = parsed;
   try {
-    if (!validateIngestRequest(parsed)) return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Invalid ingest request" } }, 400);
+    if (!validateIngestRequest(parsed) || (parsed.git_blob_sha !== undefined && !/^[0-9a-f]{40}$/.test(parsed.git_blob_sha)))
+      return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Invalid ingest request" } }, 400);
     const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? "";
     if (new TextEncoder().encode(frontmatter).byteLength > MAX_FRONTMATTER_BYTES)
       return jsonResponse({ error: { code: "VALIDATION_ERROR", message: "Frontmatter exceeds limit" } }, 400);
@@ -223,11 +224,11 @@ export async function ingestMutation(env: Env, parsed: IngestRequest): Promise<I
     }
     const now = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
-      env.DB.prepare(`INSERT INTO files (file_key, file_type, r2_key, title, source, created_at, updated_at, chunk_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(file_key) DO UPDATE SET
+      env.DB.prepare(`INSERT INTO files (file_key, file_type, r2_key, title, source, created_at, updated_at, chunk_count, git_blob_sha)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(file_key) DO UPDATE SET
         r2_key=excluded.r2_key, title=excluded.title, source=excluded.source,
-        updated_at=excluded.updated_at, chunk_count=excluded.chunk_count`)
-        .bind(file_key, file_type, r2Key, title ?? null, source ?? null, now, now, chunks.length),
+        updated_at=excluded.updated_at, chunk_count=excluded.chunk_count, git_blob_sha=excluded.git_blob_sha`)
+        .bind(file_key, file_type, r2Key, title ?? null, source ?? null, now, now, chunks.length, parsed.git_blob_sha ?? null),
       env.DB.prepare("DELETE FROM chunks WHERE file_key = ?").bind(file_key),
       ...chunks.map((chunk, i) => env.DB.prepare(
         "INSERT INTO chunks (file_key, chunk_index, content, section, wikilinks, vector_id) VALUES (?, ?, ?, ?, ?, ?)"

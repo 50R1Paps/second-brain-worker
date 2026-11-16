@@ -29,6 +29,8 @@ export interface IngestRequest {
   title?: string;
   source?: string;
   push_to_github?: boolean;
+  /** Master blob SHA, set only by GitHub sync. Public ingest never carries it. */
+  git_blob_sha?: string;
 }
 
 export interface IngestResult {

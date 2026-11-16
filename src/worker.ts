@@ -2,6 +2,7 @@ import OAuthProvider, { OAuthError } from "@cloudflare/workers-oauth-provider";
 import { GitHubHandler } from "./github-handler";
 import { OwnerMCP } from "./mcp";
 import { handleScheduled, runMaintenance } from "./cron";
+import { reconcileWiki } from "./reconcile";
 import type { Env } from "./types";
 import { denyNonOwner } from "./authorization";
 import type { Props } from "./oauth-utils";
@@ -67,5 +68,6 @@ export default {
   ): Promise<void> {
     ctx.waitUntil(runMaintenance(env));
     ctx.waitUntil(handleScheduled(env));
+    ctx.waitUntil(reconcileWiki(env));
   },
 };

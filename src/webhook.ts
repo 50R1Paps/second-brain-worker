@@ -4,8 +4,8 @@ import { jsonResponse, readBodyBounded, RequestBodyError } from "./http";
 import { MAX_FILE_BYTES, MAX_REQUEST_BYTES } from "./request-security";
 import type { Env } from "./types";
 
-const GITHUB_OWNER = "50R1Paps";
-const GITHUB_REPO = "Mysecondbrain";
+export const GITHUB_OWNER = "50R1Paps";
+export const GITHUB_REPO = "Mysecondbrain";
 const GITHUB_REPOSITORY_ID = 1270260749;
 const MAIN_REF = "refs/heads/master";
 const MAX_COMMITS = 1000;
@@ -80,18 +80,18 @@ export async function handleGitHubWebhook(request: Request, env: Env, fetchFn: F
   try {
     for (const fileKey of changes.paths) {
       try {
-        const content = await fetchGitHubMarkdown(fileKey, env, fetchFn);
+        const blob = await fetchGitHubMarkdown(fileKey, env, fetchFn);
         const renewAt = Math.floor(Date.now() / 1000);
         const renewed = await env.DB.prepare("UPDATE webhook_receipts SET lease_until = MAX(lease_until + 1, ?), expires_at = ? WHERE digest = ? AND status = 'processing' AND lease_until = ? AND lease_until > ? RETURNING lease_until")
           .bind(renewAt + LEASE_SECONDS, renewAt + RETENTION_SECONDS, digest, claim.lease_until, renewAt).first<{ lease_until: number }>();
         if (!renewed) throw new Error("Webhook claim lost");
         claim.lease_until = renewed.lease_until;
-        const operation = content === null
+        const operation = blob === null
           ? await deleteFileCore(env, fileKey)
-          : await ingestCore(env, { ...createIngestPayload(fileKey, content), push_to_github: false });
+          : await ingestCore(env, { ...createIngestPayload(fileKey, blob.content), push_to_github: false, git_blob_sha: blob.sha });
         if (operation instanceof Response) throw new Error(`Storage operation failed: HTTP ${operation.status}`);
-        if (operation.status !== "ok" && !(content === null && operation.status === "not_found")) throw new Error("Storage operation failed");
-        if (content === null) output.deleted++; else output.ingested++;
+        if (operation.status !== "ok" && !(blob === null && operation.status === "not_found")) throw new Error("Storage operation failed");
+        if (blob === null) output.deleted++; else output.ingested++;
       } catch (error) {
         output.errors.push({ file_key: fileKey, error: error instanceof Error ? error.message : "Processing failed" });
       }
@@ -136,14 +136,21 @@ function isWikiMarkdown(path: string): boolean {
   return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 
-async function fetchGitHubMarkdown(fileKey: string, env: Env, fetchFn: FetchFunction): Promise<string | null> {
+async function fetchGitHubMarkdown(fileKey: string, env: Env, fetchFn: FetchFunction): Promise<{ content: string; sha?: string } | null> {
   const path = fileKey.split("/").map(encodeURIComponent).join("/");
   const response = await fetchFn(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}?ref=master`, {
     headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${env.GITHUB_TOKEN}`, "User-Agent": "second-brain-worker" },
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub content fetch failed: HTTP ${response.status}`);
-  const data = await response.json() as { content?: unknown; encoding?: unknown; size?: unknown };
+  const data = await response.json() as GitHubBlob;
+  return { content: decodeGitHubBlob(data), sha: typeof data.sha === "string" && /^[0-9a-f]{40}$/.test(data.sha) ? data.sha : undefined };
+}
+
+export interface GitHubBlob { content?: unknown; encoding?: unknown; size?: unknown; sha?: unknown }
+
+/** Decodes a GitHub contents/blob payload within the file byte limit, as strict UTF-8. */
+export function decodeGitHubBlob(data: GitHubBlob): string {
   if (data.encoding !== "base64" || typeof data.content !== "string" || (typeof data.size === "number" && data.size > MAX_FILE_BYTES)) throw new Error("Invalid or oversized GitHub content");
   const encoded = data.content.replace(/\s/g, "");
   if (encoded.length > Math.ceil(MAX_FILE_BYTES / 3) * 4) throw new Error("GitHub content exceeds file limit");
