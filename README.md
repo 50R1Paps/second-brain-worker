@@ -11,7 +11,7 @@ Second Brain Worker è un Cloudflare Worker che:
 - **Genera embedding** semantici via Workers AI (`@cf/baai/bge-base-en-v1.5`, 768 dim)
 - **Memorizza** tutto in R2 (raw), D1 (metadata + FTS5 keyword search), e Vectorize (embedding)
 - **Espone 5 tool MCP** — `retrieve`, `ingest`, `reindex`, `read`, `grep` — accessibili dal tuo IDE via OAuth GitHub
-- **Sincronizza** automaticamente la wiki via GitHub webhook: i push su `master` riconciliano i file `.md` cambiati con il contenuto corrente
+- **Sincronizza** automaticamente la wiki via GitHub webhook: i push su `master` riconciliano i file `.md` cambiati con il contenuto corrente. Ogni giorno il cron confronta tutto `wiki/` su `master` con l'indice e recupera le differenze rimaste
 
 Il consumo è soggetto alle quote e al piano Cloudflare: i limiti applicativi riducono gli abusi, non garantiscono costi nulli.
 
@@ -239,7 +239,7 @@ Per `COOKIE_ENCRYPTION_KEY` puoi generare una stringa casuale con:
 openssl rand -hex 32
 ```
 
-Per `GITHUB_TOKEN`, preferisci un PAT fine-grained limitato ai repository necessari: Contents read/write sulla wiki per sync/pubblicazione e Issues read/write sul repository del Worker per il promemoria. Evita un token classic con accesso indiscriminato ai repository privati. Il token OAuth usato per identificare l'utente non viene conservato e non sostituisce questo secret server-side.
+Per `GITHUB_TOKEN`, preferisci un PAT fine-grained limitato ai repository necessari: Contents read/write sulla wiki per sync, riconciliazione e pubblicazione, e Issues read/write sul repository del Worker per promemoria e avvisi di riconciliazione. Evita un token classic con accesso indiscriminato ai repository privati. Il token OAuth usato per identificare l'utente non viene conservato e non sostituisce questo secret server-side.
 
 Per `WEBHOOK_SECRET`, genera un'altra stringa casuale e usala anche come secret del webhook GitHub.
 
@@ -287,6 +287,8 @@ Per sincronizzare automaticamente la wiki quando fai push su `master`:
 
 Da ora, ogni push su `master` che modifica file `.md` in `wiki/` riconcilia l'indice. Sono accettati solo repository ID `1270260749` e nome `50R1Paps/Mysecondbrain`, con firma HMAC valida. I replay dello stesso corpo vengono deduplicati per 7 giorni. Un evento di rimozione elimina dall'indice solo dopo un 404 sul contenuto corrente; errori GitHub di autenticazione o servizio non autorizzano cancellazioni.
 
+Il webhook vede solo i file dei push che riceve. Le consegne perse o fallite le recupera la [riconciliazione giornaliera](#riconciliazione-giornaliera-con-master).
+
 ---
 
 ## Gestione dei secret
@@ -304,7 +306,7 @@ I secret sono gestiti via `wrangler secret put` e stored nella dashboard Cloudfl
 
 ### Rotazione del `GITHUB_TOKEN`
 
-Il PAT `GITHUB_TOKEN` ha una scadenza configurata. Il Cron Trigger giornaliero controlla `GITHUB_TOKEN_EXPIRY` e apre una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza. La stessa esecuzione avvia separatamente la manutenzione dei dati.
+Il PAT `GITHUB_TOKEN` ha una scadenza configurata. Il Cron Trigger giornaliero controlla `GITHUB_TOKEN_EXPIRY` e apre una issue su [second-brain-worker](https://github.com/50R1Paps/second-brain-worker/issues) 2 giorni prima della scadenza. La stessa esecuzione avvia separatamente la manutenzione dei dati e la [riconciliazione con `master`](#riconciliazione-giornaliera-con-master). Con il token scaduto, la riconciliazione riceve 401 da GitHub e non modifica l'indice.
 
 Quando ricevi la notifica (o quando il token è già scaduto):
 
@@ -317,7 +319,7 @@ npx wrangler secret put GITHUB_TOKEN_EXPIRY
 ```
 
 3. Incolla il nuovo token e la nuova data di scadenza (formato ISO, es. `2026-09-25T00:00:00Z`)
-4. Chiudi la issue di promemoria su GitHub
+4. Chiudi la issue di promemoria su GitHub, e quella `[Wiki Reconcile]` se aperta, dopo la prossima esecuzione senza errori
 
 Nessun altro secret o configurazione su Cloudflare deve essere aggiornato.
 
@@ -417,14 +419,16 @@ src/
 ├── github-handler.ts  # Hono app: REST API + OAuth flow (/authorize, /callback)
 ├── oauth-utils.ts     # Utility OAuth: state, CSRF, cookie, approval dialog
 ├── webhook.ts         # GitHub webhook handler per sync automatico
-├── cron.ts            # Retention, garbage collection e reminder scadenza PAT
+├── cron.ts            # Retention, garbage collection, reminder scadenza PAT e issue di avviso
+├── reconcile.ts       # Riconciliazione giornaliera dell'indice con wiki/ su master
 └── setup.ts           # Logica del setup script (ingest bulk)
 
 migrations/
 ├── 0001_initial_schema.sql       # Schema D1: files, chunks, chunks_fts + trigger
 ├── 0002_retrieve_metrics.sql     # Metriche aggregate di retrieve
 ├── 0003_security_controls.sql    # Budget, ricevute webhook e redazione query
-└── 0004_storage_versions.sql     # Coda garbage collection differita
+├── 0004_storage_versions.sql     # Coda garbage collection differita
+└── 0005_git_blob_sha.sql         # Blob SHA di master per ogni wiki page
 
 scripts/
 └── setup.ts           # CLI entry point per il setup script
@@ -502,6 +506,31 @@ curl -X POST https://second-brain.<tuo-subdomain>.workers.dev/api/reindex \
 ```bash
 npx wrangler d1 execute second-brain --remote \
   --command "SELECT COUNT(*) as total, COUNT(vector_id) as with_vectors FROM chunks"
+```
+
+### Riconciliazione giornaliera con `master`
+
+Il Cron Trigger giornaliero (`0 9 * * *`, UTC) confronta i file `wiki/**/*.md` su `master` di `50R1Paps/Mysecondbrain` con le wiki page indicizzate in D1:
+
+1. Legge l'albero di `master` con una sola richiesta alla Git Trees API, con il blob SHA di ogni file.
+2. Ingerisce i file nuovi e quelli il cui blob SHA differisce da `files.git_blob_sha`, scaricando il blob esatto. Non scrive mai su GitHub.
+3. Elimina le wiki page indicizzate che non sono più su `master`. I file ingeriti fuori da `wiki/` non vengono toccati.
+
+Ogni esecuzione applica al massimo 40 modifiche (`RECONCILE_BATCH_SIZE` in `src/reconcile.ts`). Ogni ingest costa una richiesta a GitHub, e con albero, issue e promemoria il cron resta entro 45 dei 50 [subrequest esterni per invocazione del piano Free](https://developers.cloudflare.com/workers/platform/limits/#subrequests). Le chiamate a D1 e ai Durable Object rientrano nel limite separato di 1.000. Vengono prima i file assenti dall'indice, poi le eliminazioni, poi i file da aggiornare. Il resto passa all'esecuzione successiva.
+
+Non c'è un cursore salvato: ogni esecuzione ricalcola la differenza dall'albero corrente. Un push tra due esecuzioni non lascia stato da invalidare, e i file già allineati escono dalla differenza.
+
+Ogni percorso di scrittura tratta `git_blob_sha` in modo diverso. Il webhook salva lo SHA di `master`. Il reindex conserva quello esistente. Un ingest manuale lo azzera, e la riconciliazione successiva riallinea il file a `master`. Le righe senza SHA, comprese quelle indicizzate prima della migration 0005, vengono reingerite una volta da `master`. Con 171 file indicizzati e 251 su `master`, i primi due giorni aggiungono gli 80 mancanti e i cinque successivi riallineano i 171 esistenti.
+
+Nessuna cancellazione avviene se GitHub risponde con un errore o con un albero troncato. I file modificati dopo l'inizio dell'esecuzione (ad esempio da un webhook) restano fuori fino al giorno dopo. I file oltre 256 KiB vengono segnalati e non ingeriti.
+
+Se l'esecuzione fallisce o qualche file non passa, il cron apre una issue `[Wiki Reconcile] Indice non allineato a master` su questo repository, oppure aggiorna quella già aperta. La issue contiene solo conteggi e messaggi d'errore, perché il repository è pubblico. I path dei file sono nei Workers Logs (evento `wiki_reconcile`). Con un 401 il `GITHUB_TOKEN` è scaduto: segui [Rotazione del `GITHUB_TOKEN`](#rotazione-del-github_token). Se anche la scrittura della issue fallisce (lo stesso token scaduto), l'invocazione termina con un'eccezione e l'evento `wiki_reconcile_alert_failed` compare nei log. Senza `GITHUB_TOKEN` la riconciliazione viene saltata.
+
+Per controllare il divario:
+
+```bash
+npx wrangler d1 execute second-brain --remote \
+  --command "SELECT COUNT(*) AS wiki_pages, COUNT(git_blob_sha) AS with_master_sha FROM files WHERE file_type = 'wiki_page'"
 ```
 
 ### Verificare le metriche di retrieve

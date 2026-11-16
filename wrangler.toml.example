@@ -75,6 +75,6 @@ simple = { limit = 120, period = 60 }
 # GITHUB_TOKEN
 # GITHUB_TOKEN_EXPIRY (ISO date string, e.g. 2026-09-25T00:00:00Z)
 
-# Cron trigger: daily check for token expiry reminder
+# Cron trigger: daily maintenance, token expiry reminder and wiki reconciliation with master
 [triggers]
 crons = ["0 9 * * *"]

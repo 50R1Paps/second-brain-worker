@@ -38,29 +38,49 @@ export async function handleScheduled(
   if (daysUntilExpiry > ALERT_DAYS_BEFORE) return;
   if (daysUntilExpiry < -30) return;
 
-  const hasOpenIssue = await checkExistingReminder(env, fetchFn);
-  if (hasOpenIssue) return;
+  if (await findOpenIssue(env, fetchFn, REMINDER_TITLE)) return;
 
   await createReminderIssue(env, fetchFn, daysUntilExpiry);
 }
 
-async function checkExistingReminder(
+export function githubHeaders(env: Env): Record<string, string> {
+  return {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+    "User-Agent": "second-brain-worker",
+  };
+}
+
+/** Finds the open alert issue with this exact title, so each alert has at most one open issue. */
+export async function findOpenIssue(
   env: Env,
   fetchFn: FetchFunction,
-): Promise<boolean> {
+  title: string,
+): Promise<{ number: number; title: string } | undefined> {
   const url = `https://api.github.com/repos/${ALERT_REPO_OWNER}/${ALERT_REPO_NAME}/issues?state=open&per_page=100`;
-  const response = await fetchFn(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      "User-Agent": "second-brain-worker",
-    },
+  const response = await fetchFn(url, { headers: githubHeaders(env) });
+
+  if (!response.ok) throw new Error(`GitHub issue lookup failed (HTTP ${response.status})`);
+
+  const issues = (await response.json()) as Array<{ number: number; title: string }>;
+  return issues.find((issue) => issue.title === title);
+}
+
+/** Updates the open alert issue with this title, or opens it when none is open. */
+export async function upsertIssue(
+  env: Env,
+  fetchFn: FetchFunction,
+  issue: { title: string; body: string; label: string },
+): Promise<"created" | "updated"> {
+  const existing = await findOpenIssue(env, fetchFn, issue.title);
+  const base = `https://api.github.com/repos/${ALERT_REPO_OWNER}/${ALERT_REPO_NAME}/issues`;
+  const response = await fetchFn(existing ? `${base}/${existing.number}` : base, {
+    method: existing ? "PATCH" : "POST",
+    headers: { ...githubHeaders(env), "Content-Type": "application/json" },
+    body: JSON.stringify(existing ? { body: issue.body } : { title: issue.title, body: issue.body, labels: [issue.label] }),
   });
-
-  if (!response.ok) throw new Error(`Token reminder lookup failed (HTTP ${response.status})`);
-
-  const issues = (await response.json()) as Array<{ title: string }>;
-  return issues.some((issue) => issue.title === REMINDER_TITLE);
+  if (!response.ok) throw new Error(`GitHub issue ${existing ? "update" : "creation"} failed (HTTP ${response.status})`);
+  return existing ? "updated" : "created";
 }
 
 async function createReminderIssue(
@@ -99,12 +119,7 @@ async function createReminderIssue(
 
   const response = await fetchFn(url, {
     method: "POST",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      "User-Agent": "second-brain-worker",
-      "Content-Type": "application/json",
-    },
+    headers: { ...githubHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify({
       title: REMINDER_TITLE,
       body,
