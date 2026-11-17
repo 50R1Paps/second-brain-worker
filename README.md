@@ -7,7 +7,7 @@ Un knowledge base personale **serverless** su Cloudflare Workers che indicizza l
 Second Brain Worker è un Cloudflare Worker che:
 
 - **Indicizza** file markdown dalla wiki Obsidian e file esterni (PDF, articoli, testo)
-- **Chunka** il contenuto rispettando la struttura delle sezioni (`##`/`###`), preservando frontmatter e wikilink
+- **Chunka** il contenuto rispettando la struttura delle sezioni (`##`/`###`; il testo prima del primo `##` è una sezione a sé, col nome dell'H1). Ogni chunk comincia col titolo della pagina, non con tutto il frontmatter; le sezioni fatte solo di elenchi di wikilink (`Vedi anche`, `Collegamenti`) restano fuori dall'indice. I wikilink non vengono mai spezzati
 - **Genera embedding** semantici via Workers AI (`@cf/baai/bge-base-en-v1.5`, 768 dim)
 - **Memorizza** tutto in R2 (raw), D1 (metadata + FTS5 keyword search), e Vectorize (embedding)
 - **Espone 5 tool MCP** — `retrieve`, `ingest`, `reindex`, `read`, `grep` — accessibili dal tuo IDE via OAuth GitHub

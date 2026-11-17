@@ -21,7 +21,7 @@ Identificatore univoco di un file nel sistema. Per le wiki page è il path relat
 _Avoid_: id, chiave
 
 **Chunk**:
-Una sezione di testo estratta da un file, usata per l'indicizzazione. Per i markdown, rispetta la struttura delle sezioni (`##`). Contiene metadata (file_key, posizione, wikilink presenti).
+Una sezione di testo estratta da un file, usata per l'indicizzazione. Per i markdown, rispetta la struttura delle sezioni (`##`/`###`), compreso il testo prima del primo `##`, e comincia col titolo della pagina. Le sezioni fatte solo di elenchi di wikilink non diventano chunk. Contiene metadata (file_key, posizione, wikilink presenti).
 _Avoid_: pezzo, frammento, slice
 
 **Wikilink**:

@@ -40,13 +40,65 @@ describe("chunkMarkdown", () => {
     expect(chunkMarkdown(text)).toHaveLength(1);
   });
 
-  it("extracts frontmatter and includes it in every chunk", () => {
+  it("keeps a page whose body is only an H1", () => {
+    const chunks = chunkMarkdown(`---\ntitle: Stub\n---\n# Stub\n`);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].section).toBe("# Stub");
+  });
+
+  it("prefixes every chunk with the page title instead of the frontmatter", () => {
     const chunks = chunkMarkdown(SAMPLE_WITH_FRONTMATTER);
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
-      expect(chunk.content).toContain("title: Tool Attention");
-      expect(chunk.content).toContain("---");
+      expect(chunk.content.startsWith("Tool Attention\n\n")).toBe(true);
+      expect(chunk.content).not.toContain("tags:");
+      expect(chunk.content).not.toContain("---");
     }
+  });
+
+  const WIKI_PAGE = `---
+title: "Tools Tax"
+type: concept
+sources: ["Tool Attention Is All You Need"]
+tags: [chiave, mcp]
+---
+
+# Tools Tax
+
+Il **Tools Tax** è l'overhead ricorrente di token causato dalla re-iniezione degli schema MCP.
+
+## Impatto
+
+Ogni turno paga di nuovo il costo di tutti gli schema.
+
+---
+
+## Vedi anche
+
+- [[Model Context Protocol (MCP)]]
+- [[Tool Attention]] — mitigazione middleware
+`;
+
+  it("indexes the text before the first ## as a section named after the H1", () => {
+    const lead = chunkMarkdown(WIKI_PAGE).find((c) => c.section === "# Tools Tax");
+    expect(lead).toBeDefined();
+    expect(lead!.content).toContain("overhead ricorrente");
+  });
+
+  it("leaves out sections made only of wikilink list items", () => {
+    const chunks = chunkMarkdown(WIKI_PAGE);
+    expect(chunks.map((c) => c.section)).toEqual(["# Tools Tax", "## Impatto"]);
+  });
+
+  it("keeps link-only sections when the page has nothing else", () => {
+    const chunks = chunkMarkdown(`---\ntitle: Hub\n---\n\n## Pagine\n\n- [[A]]\n- [[B]]\n`);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].wikilinks).toEqual(["[[A]]", "[[B]]"]);
+  });
+
+  it("chunks CRLF files like LF files", () => {
+    const crlf = chunkMarkdown(WIKI_PAGE.replace(/\n/g, "\r\n"));
+    expect(crlf).toEqual(chunkMarkdown(WIKI_PAGE));
   });
 
   it("splits on ## and ### headings", () => {
