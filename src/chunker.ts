@@ -6,28 +6,47 @@ export interface Chunk {
 }
 
 const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g;
-const FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---\n/;
+const FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---(?:\n|$)/;
+const TITLE_PATTERN = /^title:[ \t]*(.+?)[ \t]*$/m;
+const H1_PATTERN = /^#\s+(.+)$/;
 const HEADING_PATTERN = /^(#{2,3})\s+(.+)$/;
+const LINK_ITEM_PATTERN = /^\s*(?:[-*+]|\d+\.)\s+\[\[[^\]]+\]\]/;
+const RULE_PATTERN = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 const MIN_CHUNK_SIZE = 500;
 const MAX_CHUNK_SIZE = 1000;
 const OVERLAP = 50;
 
+/**
+ * Splits a markdown page into chunks on `##`/`###` headings. The text before
+ * the first `##` is its own section, named after the H1. Each chunk starts
+ * with the page title instead of the whole frontmatter, so tags and sources
+ * do not inflate keyword matches in every chunk. Sections made only of
+ * wikilink list items ("Vedi anche", "Collegamenti") are left out, unless
+ * the page has nothing else.
+ */
 export function chunkMarkdown(text: string): Chunk[] {
-  if (text.trim().length === 0) {
+  const normalized = text.replace(/\r\n?/g, "\n");
+  if (normalized.trim().length === 0) {
     return [];
   }
 
-  const frontmatterMatch = text.match(FRONTMATTER_PATTERN);
-  const frontmatter = frontmatterMatch ? frontmatterMatch[0] : "";
-  const body = frontmatterMatch ? text.slice(frontmatterMatch[0].length) : text;
+  const frontmatterMatch = normalized.match(FRONTMATTER_PATTERN);
+  const body = frontmatterMatch
+    ? normalized.slice(frontmatterMatch[0].length)
+    : normalized;
 
   const sections = splitBySections(body);
+  const contentSections = sections.filter((s) => !isLinkOnly(s.content));
+  const kept = contentSections.length > 0 ? contentSections : sections;
+
+  const title = pageTitle(frontmatterMatch?.[1], body);
+  const prefix = title ? `${title}\n\n` : "";
   const chunks: Chunk[] = [];
   let chunkIndex = 0;
 
-  for (const section of sections) {
-    const sectionChunks = splitSectionIntoChunks(section.content, frontmatter);
+  for (const section of kept) {
+    const sectionChunks = splitSectionIntoChunks(section.content, prefix);
     for (const content of sectionChunks) {
       chunks.push({
         content,
@@ -41,45 +60,68 @@ export function chunkMarkdown(text: string): Chunk[] {
   return chunks;
 }
 
+function pageTitle(frontmatter: string | undefined, body: string): string {
+  const fromFrontmatter = frontmatter?.match(TITLE_PATTERN)?.[1];
+  if (fromFrontmatter) {
+    return fromFrontmatter.replace(/^(["'])(.*)\1$/, "$2").trim();
+  }
+  for (const line of body.split("\n")) {
+    const match = line.match(H1_PATTERN);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+  return "";
+}
+
+/** True when every non-blank line after the heading is a wikilink list item. */
+function isLinkOnly(sectionContent: string): boolean {
+  const lines = sectionContent
+    .split("\n")
+    .filter((line) => line.trim().length > 0 && !RULE_PATTERN.test(line));
+  const items = HEADING_PATTERN.test(lines[0] ?? "") ? lines.slice(1) : lines;
+  return items.length > 0 && items.every((line) => LINK_ITEM_PATTERN.test(line));
+}
+
 interface Section {
   heading: string;
   content: string;
 }
 
 function splitBySections(body: string): Section[] {
-  const lines = body.split("\n");
   const sections: Section[] = [];
-  let currentHeading: string | null = null;
+  let currentHeading = "";
   let currentLines: string[] = [];
+  let hasContent = false;
 
-  for (const line of lines) {
-    const match = line.match(HEADING_PATTERN);
-    if (match) {
-      if (
-        currentHeading !== null &&
-        currentLines.join("\n").trim().length > 0
-      ) {
-        sections.push({
-          heading: currentHeading,
-          content: currentLines.join("\n"),
-        });
-      }
+  const flush = () => {
+    if (hasContent) {
+      sections.push({ heading: currentHeading, content: currentLines.join("\n") });
+    }
+  };
+
+  for (const line of body.split("\n")) {
+    if (HEADING_PATTERN.test(line)) {
+      flush();
       currentHeading = line;
       currentLines = [line];
-    } else if (currentHeading !== null) {
+      hasContent = false;
+      continue;
+    }
+    if (sections.length === 0 && currentHeading === "" && H1_PATTERN.test(line)) {
+      currentHeading = line;
       currentLines.push(line);
+      continue;
+    }
+    currentLines.push(line);
+    if (line.trim().length > 0 && !RULE_PATTERN.test(line)) {
+      hasContent = true;
     }
   }
-
-  if (currentHeading !== null && currentLines.join("\n").trim().length > 0) {
-    sections.push({
-      heading: currentHeading,
-      content: currentLines.join("\n"),
-    });
-  }
+  flush();
 
   if (sections.length === 0 && body.trim().length > 0) {
-    return [{ heading: "", content: body }];
+    return [{ heading: currentHeading, content: body }];
   }
 
   return sections;
@@ -87,17 +129,17 @@ function splitBySections(body: string): Section[] {
 
 function splitSectionIntoChunks(
   sectionContent: string,
-  frontmatter: string,
+  prefix: string,
 ): string[] {
-  const fullContent = frontmatter + sectionContent;
+  const fullContent = prefix + sectionContent.trim();
 
   if (fullContent.length <= MAX_CHUNK_SIZE) {
     return [fullContent];
   }
 
-  const contentLimit = Math.max(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE - frontmatter.length);
+  const contentLimit = Math.max(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE - prefix.length);
   return splitTextSafely(sectionContent, contentLimit).map(
-    (content) => frontmatter + content,
+    (content) => prefix + content,
   );
 }
 
